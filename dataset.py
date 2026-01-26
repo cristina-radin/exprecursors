@@ -33,7 +33,9 @@ class LazyDataset(Dataset):
         self.lazy_loading = lazy_loading
         self.offset = offset
 
-        self.ds = xr.open_dataset(self.file_name)
+        # you can open mutliple netcdf files here without acutally loading the data into memory
+        # A zarr dataset would be even quicker than nc
+        self.ds = xr.open_mfdataset(self.file_name, parallel=True)
         if not self.lazy_loading:
             self.ds = self.ds.load()  # Load all data into memory upfront
 

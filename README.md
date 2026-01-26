@@ -6,11 +6,11 @@ A PyTorch Lightning-based skeleton for deep learning with climate model data.
 
 ```
 .
-├── dataset.py          # Dataset classes for loading climate data
+├── dataset.py          # Dataset classes for loading data
 ├── datamodule.py       # PyTorch Lightning DataModule
 ├── model.py            # Neural network model definitions
 ├── train.py            # Training script (CLI)
-├── train_example.ipynb # Jupyter notebook with training example
+├── notebooks/train_example.ipynb # Jupyter notebook with training example
 ├── requirements.txt    # Python dependencies
 └── README.md           # This file
 ```
