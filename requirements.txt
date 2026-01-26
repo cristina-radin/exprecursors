@@ -1,0 +1,17 @@
+# Core dependencies
+torch>=2.0.0
+pytorch-lightning>=2.0.0
+torchmetrics>=1.0.0
+
+# Data handling
+numpy>=1.24.0
+xarray>=2023.1.0
+netCDF4>=1.6.0
+# zarr>=2.14.0  # Uncomment if using Zarr format
+
+# Utilities
+matplotlib>=3.7.0
+
+# Jupyter
+jupyter>=1.0.0
+ipykernel>=6.0.0
