@@ -1,0 +1,15 @@
+__pycache__/
+notebooks/__pycache__/
+notebooks/*.ipynb_checkpoints
+data/
+models/
+.venv
+.ipynb_checkpoints
+.vscode
+venv/
+env/
+*.pyc
+__pycache__/
+venv/
+__pycache__/
+*.pyc
