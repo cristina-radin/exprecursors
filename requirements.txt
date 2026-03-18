@@ -130,6 +130,7 @@ pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 python-json-logger==4.0.0
 pytorch-lightning==2.6.0
+wandb==0.17.9
 pytz==2025.2
 PyYAML==6.0.3
 pyzmq==27.1.0

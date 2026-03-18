@@ -156,6 +156,7 @@ class LazyDataset(Dataset):
         input_data = torch.cat([physical, land_mask.unsqueeze(0)], dim=0)
         
         if self.add_temporal_features:
+            #print(f"Adding temporal features...")
             year_norm = (self.years[idx] - self.year_min) / (self.year_max - self.year_min)
             month_sin = np.sin(2 * np.pi * self.months[idx] / 12)
             month_cos = np.cos(2 * np.pi * self.months[idx] / 12)

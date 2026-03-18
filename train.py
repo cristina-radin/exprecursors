@@ -5,8 +5,7 @@ Training script for climate model.
 import argparse
 from pathlib import Path
 import torch
-import yaml 
-
+import yaml
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import (
@@ -15,7 +14,6 @@ from pytorch_lightning.callbacks import (
     ModelCheckpoint,
 )
 from pytorch_lightning.loggers import TensorBoardLogger
-import yaml
 
 from datamodule import LazyDataModule
 from model import CNNLightningModule, CNNModel
@@ -98,6 +96,12 @@ def main():
         config = yaml.safe_load(f)
     
     args = argparse.Namespace(**config)
+
+    use_wandb = getattr(args, "use_wandb", False)
+    wandb_project = getattr(args, "wandb_project", "climate-model")
+    wandb_entity = getattr(args, "wandb_entity", None)
+    wandb_run_name = getattr(args, "wandb_run_name", None)
+    wandb_tags = getattr(args, "wandb_tags", None)
     
     pl.seed_everything(args.seed)
     torch.set_float32_matmul_precision('medium')
@@ -158,16 +162,39 @@ def main():
     ]
     
     # Set up logger
-    logger = TensorBoardLogger(
-        save_dir=output_dir,
-        name="logs",
-    ) # we could also use wandb: https://wandb.ai/home
+    loggers = [
+        TensorBoardLogger(
+            save_dir=output_dir,
+            name="logs",
+        )
+    ]
+
+    if use_wandb:
+        try:
+            from pytorch_lightning.loggers import WandbLogger
+        except Exception as exc:
+            raise RuntimeError(
+                "Wandb logging requested but wandb is not installed. Install it with `pip install wandb`."
+            ) from exc
+
+        wandb_logger = WandbLogger(
+            project=wandb_project,
+            entity=wandb_entity,
+            name=wandb_run_name,
+            tags=wandb_tags,
+            save_dir=str(output_dir),
+        )
+        loggers.append(wandb_logger)
+
+    for logger in loggers:
+        logger.log_hyperparams(config)
+
     
     # Initialize trainer
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
         callbacks=callbacks,
-        logger=logger,
+        logger=loggers if len(loggers) > 1 else loggers[0],
         accelerator="auto",
         devices="auto",
         num_sanity_val_steps=0, 

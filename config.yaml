@@ -15,8 +15,15 @@ seed: 42
 output_dir: "outputs" 
 loss_fn: "BCEWithLogitsLoss"
 
+# Logging
+use_wandb: False
+wandb_project: "first_cnn_tests"
+wandb_entity: "hereon-ksn-expercursors"
+wandb_run_name: null
+wandb_tags: null
+
 # Features
-add_temporal_features: true
+add_temporal_features: false
 normalize: true
 
 # Data splits
