@@ -16,7 +16,7 @@ output_dir: "outputs"
 loss_fn: "BCEWithLogitsLoss"
 
 # Logging
-use_wandb: False
+use_wandb: True
 wandb_project: "first_cnn_tests"
 wandb_entity: "hereon-ksn-expercursors"
 wandb_run_name: null

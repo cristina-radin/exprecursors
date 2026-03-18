@@ -75,20 +75,23 @@ class LazyDataModule(pl.LightningDataModule):
                     self.train_files, 
                     variables=self.variables,
                     lazy_loading=self.lazy_loading,
-                    normalize=self.normalize
+                    normalize=self.normalize,
+                    add_temporal_features=self.add_temporal_features
                 )
             self.val_dataset = LazyDataset(
                     self.val_files, 
                     variables=self.variables,
                     lazy_loading=self.lazy_loading,
-                    normalize=self.normalize
+                    normalize=self.normalize,
+                    add_temporal_features=self.add_temporal_features
                 )
             if self.test_files is not None:
                 self.test_dataset = LazyDataset(
                     self.test_files, 
                     variables=self.variables,
                     lazy_loading=self.lazy_loading,
-                    normalize=self.normalize
+                    normalize=self.normalize,
+                    add_temporal_features=self.add_temporal_features
                 )    
 
             if self.normalize:
@@ -109,6 +112,7 @@ class LazyDataModule(pl.LightningDataModule):
             variables=self.variables,
             lazy_loading=self.lazy_loading,
             normalize=self.normalize,
+            add_temporal_features=self.add_temporal_features
             )
         
             if self.normalize and not hasattr(full_ds, 'input_means'):
@@ -155,7 +159,9 @@ class LazyDataModule(pl.LightningDataModule):
                 self.test_files, 
                 variables=self.variables,
                 lazy_loading=self.lazy_loading,
-                normalize=self.normalize
+                normalize=self.normalize,
+                add_temporal_features=self.add_temporal_features
+
             )
         elif self.test_dataset is None and stage == 'test':
             raise ValueError("Test files must be provided for test stage.")

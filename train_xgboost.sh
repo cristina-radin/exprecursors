@@ -23,4 +23,4 @@ source venv/bin/activate
 which python
 
 # Submit SLURM job
-python -u train.py --config config.yaml
+python -u reduced_dimensionality.py
