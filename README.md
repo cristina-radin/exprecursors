@@ -47,11 +47,12 @@ Inputs: "/p/project1/hai_1127/inputs/processed_data/training_dataset1.nc"
         --cpus-per-task=4 \
         --mem=32G \
         python train.py
-```
+```el proyecto que estoy haciendo? 
+
 
 Select a checkpoint from output folder and run: 
 
 ```bash
-        python xai/run_xai.py --checkpoint  /p/project1/hai_1127/radin1/exprecursors/outputs/checkpoints/cnn-epoch=25-val_loss=1.2628.ckpt --config config.yaml
+        python xai/run_xai.py --checkpoint  /p/project1/hai_1127/radin1/exprecursors/outputs/checkpoints/cnn-epoch=39-val_loss=0.7477.ckpt --config config.yaml
 ```
 

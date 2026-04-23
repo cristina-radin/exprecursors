@@ -1,11 +1,17 @@
 """
-Dataset classes for loading climate model data.
+Dataset class for daily climate data (MHW precursor detection).
+
+Input:  sliding window of `window_size` days → [window_size, n_vars, lat, lon]
+Target: mean SST anomaly over North Sea at t + lead_time (scalar, normalized)
+
+Anomalisation:
+  to_anom  — already an anomaly (ICON-COAST, ref 1985-2014); left unchanged.
+  u10, v10, msl, ssr — ERA5 absolute values; day-of-year climatology subtracted
+                       here using reference period 1985-2014, 5-day running window,
+                       consistent with the CDO preprocessing of to_anom.
 """
 
-import os
-from pathlib import Path
-from typing import Optional, Callable, List, Tuple, Any
-
+from typing import Tuple
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -15,181 +21,228 @@ import yaml
 
 class LazyDataset(Dataset):
     """
-    Dataset class for loading climate model data from disk.
-    
-    Args:
-        file_pattern: Glob pattern or path to data files (e.g., '/path/to/data/*.nc')
-        lazy_loading: If True, load data from disk during training; otherwise load all data into memory
-        offset: Time offset between precursor and target variables
-        variables: List of variable names to load from the dataset (e.g., ["zos", "mld", "to", "target"])
-        normalize: Whether to normalize the input variables
-        norm_stats: Optional dictionary of normalization statistics (mean, std) for each variable. If None, will compute from the dataset (only if lazy_loading=False)
+    Dataset for daily merged NetCDF (merged_daily.nc).
+
+    Normalization stats (input and target) are NOT computed here.
+    Call compute_stats(train_indices) from the DataModule after splitting,
+    so stats are derived from training data only.
     """
-    
+
     def __init__(
         self,
         file_name: str,
-        lazy_loading=False,
-        offset=1,
-        variables=None,
-        normalize: bool = None,
-        norm_stats: Optional[dict] = None,
-        add_temporal_features: bool = None,  
-        config_path: str = "/p/project1/hai_1127/radin1/exprecursors/config.yaml"
-        #self.input_time_steps
+        config_path: str = "/p/project1/hai_1127/radin1/exprecursors/config.yaml",
     ):
         super().__init__()
 
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config = yaml.safe_load(f)
-        
-            if variables is None:
-                variables = config['variables']
-            if normalize is None:
-                normalize = config.get('normalize', True)
-            if add_temporal_features is None:
-                add_temporal_features = config.get('add_temporal_features', True)
 
+        self.file_name       = file_name
+        self.variables       = config["variables"]
+        self.ocean_variables = set(config.get("ocean_variables", self.variables))
+        self.normalize       = config.get("normalize", True)
+        self.window_size     = config.get("window_size", 60)
+        self.lead_time       = config.get("lead_time", 7)
+        self.clim_ref_start  = config.get("clim_ref_start", 1985)
+        self.clim_ref_end    = config.get("clim_ref_end",   2014)
+        self.clim_window     = config.get("clim_window",    5)
 
-        self.file_name = file_name
-        self.lazy_loading = lazy_loading
-        self.offset = offset
-        self.variables = variables
-        self.normalize = normalize
-        self.norm_stats = norm_stats
-        self.add_temporal_features = add_temporal_features
+        self.ds = xr.open_mfdataset(file_name, parallel=True)
 
-        # you can open mutliple netcdf files here without acutally loading the data into memory
-        # A zarr dataset would be even quicker than nc
-        self.ds = xr.open_mfdataset(self.file_name, parallel=True)
-        #self.input_time_steps
+        # Temporal coordinates
+        self.years    = self.ds.time.dt.year.values
+        self.months   = self.ds.time.dt.month.values
+        self.doys     = self.ds.time.dt.dayofyear.values  # 1–366
+        self.year_min = self.years.min()
+        self.year_max = self.years.max()
 
-        self.ds = self.ds[variables]  # Select only the variables we need to save memory
-        if 'land_mask' in variables:
-            land_mask_data = self.ds['land_mask'].values
-            if land_mask_data.ndim == 3:
-                land_mask_data = land_mask_data[0]  # Si tiene time, coger primero
-            self.tierra_indices = land_mask_data == 0  # True donde hay tierra
-            print(f"Land: {self.tierra_indices.mean():.1%} of the map")
+        # Land mask: True where land — only applied to ocean variables
+        land_mask        = torch.tensor(self.ds["land_mask"].values, dtype=torch.float32)
+        self.tierra_mask = (land_mask == 0)
 
-        if self.add_temporal_features:
-            self.years = self.ds.time.dt.year.values
-            self.months = self.ds.time.dt.month.values
-            self.days = self.ds.time.dt.day.values
-            self.year_min = self.years.min()
-            self.year_max = self.years.max()
-            print(f"Temporal coverage {self.year_min}-{self.year_max}")
-        
-        if not self.lazy_loading:
-            self.ds = self.ds.load()  # Load all data into memory upfront
-            if self.normalize and self.norm_stats is None:
-                self.norm_stats = self._compute_stats()
+        # Pre-load variables into memory
+        print("Loading data into memory...")
+        self.data = {}
+        for var in self.variables:
+            self.data[var] = torch.tensor(
+                self.ds[var].values, dtype=torch.float32
+            )  # (time, lat, lon)
+        self.target = torch.tensor(
+            self.ds["target"].values, dtype=torch.float32
+        )  # (time,)
 
-    def _compute_stats(self):
-        """Compute mean and std for each variable in the dataset for normalization.
-        ONLY OVER OCEAN PIXELS (LAND_MASK=0)"""
-        stats = {}
-        physical_vars = [v for v in self.variables if v not in ['target', 'land_mask']]
-        
-        for var in physical_vars:
-            data = self.ds[var].values  # [time, lat, lon]
-            
-            data_con_nan = data.copy()
-            data_con_nan[:, self.tierra_indices] = np.nan
-            
-            # Statistics ignoring land pixels (NaN)
-            mean = np.nanmean(data_con_nan)
-            std = np.nanstd(data_con_nan) + 1e-8
-            
-            stats[var] = {'mean': mean, 'std': std}
-          
-        self.input_means = torch.tensor([stats[v]['mean'] for v in physical_vars], dtype=torch.float32).view(-1, 1, 1)
-        self.input_stds = torch.tensor([stats[v]['std'] for v in physical_vars], dtype=torch.float32).view(-1, 1, 1)
-    
-        return stats
-    
-    def get_norm_stats(self):
-        return self.norm_stats
+        print(f"  Variables:  {self.variables}")
+        print(f"  Ocean vars: {sorted(self.ocean_variables)}")
+        print(f"  Time steps: {len(self.ds.time)}")
+        print(f"  Window: {self.window_size} days, lead: {self.lead_time} days")
+        print(f"  Samples: {len(self)}")
+
+        # Stats — overwritten by compute_stats()
+        self.clim_means  = {}   # var → (365, lat, lon) climatology
+        self.input_means = None
+        self.input_stds  = None
+        self.target_mean = 0.0
+        self.target_std  = 1.0
+
+    # ------------------------------------------------------------------
+    # Climatology
+    # ------------------------------------------------------------------
+
+    def _compute_clim(self) -> None:
+        """
+        Compute day-of-year running-mean climatology for ERA5 variables
+        (all variables except to_anom, which is already an anomaly).
+
+        Reference period : clim_ref_start – clim_ref_end (default 1985-2014).
+        Window           : ±(clim_window//2) days (default 5, consistent with
+                           CDO ydrunmean,5 used for to_anom preprocessing).
+        Leap day (DOY 366) mapped to DOY 365 (Dec 31).
+
+        Result stored in self.clim_means: {var: tensor(365, lat, lon)}.
+        """
+        vars_to_anom = [v for v in self.variables if v != "to_anom"]
+        if not vars_to_anom:
+            return
+
+        ref_mask = (self.years >= self.clim_ref_start) & (self.years <= self.clim_ref_end)
+        ref_doys = self.doys[ref_mask].copy()
+        ref_doys[ref_doys == 366] = 365  # map leap days → Dec 31
+
+        half_w = self.clim_window // 2
+
+        print(f"\nComputing day-of-year climatology "
+              f"({self.clim_ref_start}-{self.clim_ref_end}, "
+              f"window={self.clim_window})...")
+
+        for var in vars_to_anom:
+            ref_data = self.data[var][ref_mask].numpy()  # (n_ref, lat, lon)
+            clim     = np.zeros((365, ref_data.shape[1], ref_data.shape[2]),
+                                dtype=np.float32)
+
+            for d in range(1, 366):
+                window_doys = np.array([
+                    ((d - 1 + off) % 365) + 1
+                    for off in range(-half_w, half_w + 1)
+                ])
+                mask = np.isin(ref_doys, window_doys)
+                if mask.any():
+                    clim[d - 1] = ref_data[mask].mean(axis=0)
+
+            self.clim_means[var] = torch.tensor(clim, dtype=torch.float32)
+            print(f"  {var}: clim mean={clim.mean():.4f}, std={clim.std():.4f}")
+
+    # ------------------------------------------------------------------
+    # Normalisation stats (call after split)
+    # ------------------------------------------------------------------
+
+    def compute_stats(self, train_indices) -> None:
+        """
+        1. Compute day-of-year climatology from 1985-2014 (independent of split).
+        2. Compute mean/std from training data on climatology-removed values.
+
+        Args:
+            train_indices: list/array of sample indices in the train set.
+        """
+        train_indices = list(train_indices)
+
+        # Step 1 — climatology (reference period, independent of split)
+        self._compute_clim()
+
+        # Step 2 — mean/std on training time span
+        t_start = min(train_indices)
+        t_end   = max(train_indices) + self.window_size
+
+        print("\nComputing normalisation stats from train data only...")
+        means, stds = [], []
+
+        for var in self.variables:
+            data = self.data[var][t_start:t_end].clone()  # (T, lat, lon)
+
+            # Subtract day-of-year climatology for ERA5 variables
+            if var in self.clim_means:
+                abs_ts = np.arange(t_start, t_start + len(data))
+                doys   = self.doys[abs_ts].copy()
+                doys[doys == 366] = 365
+                for i, doy in enumerate(doys):
+                    data[i] -= self.clim_means[var][doy - 1]
+
+            if var in self.ocean_variables:
+                data[:, self.tierra_mask] = float("nan")
+                mean = float(torch.nanmean(data))
+                std  = float(torch.std(data[~torch.isnan(data)])) + 1e-8
+            else:
+                mean = float(data.mean())
+                std  = float(data.std()) + 1e-8
+
+            means.append(mean)
+            stds.append(std)
+            print(f"  {var}: mean={mean:.4f}, std={std:.4f}")
+
+        self.input_means = torch.tensor(means, dtype=torch.float32).view(-1, 1, 1)
+        self.input_stds  = torch.tensor(stds,  dtype=torch.float32).view(-1, 1, 1)
+
+        # Target stats from training target timestamps
+        target_idx_list  = [i + self.window_size - 1 + self.lead_time
+                            for i in train_indices]
+        train_targets    = self.target[torch.tensor(target_idx_list, dtype=torch.long)]
+        self.target_mean = float(train_targets.mean())
+        self.target_std  = float(train_targets.std()) + 1e-8
+        print(f"  target: mean={self.target_mean:.4f}, std={self.target_std:.4f}")
+
+    # ------------------------------------------------------------------
 
     def __len__(self) -> int:
-        """Return the number of samples in the dataset.
-        TODO This depends on how exactly we sample the data!
-        """
-        return len(self.ds.time) - self.offset
-    
-    def __getitem__(self, idx):
-        print(f"Loading sample {idx}")
+        return len(self.ds.time) - self.window_size - self.lead_time + 1
 
-
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Load and return a sample from the dataset.
-        
-        Args:
-            idx: Index of the sample to load. During training, this will usually be a random index according to how large the dataset is (given by len(self))
-            
         Returns:
-            Tuple of (input_data, target_data) as tensors
+            x_spatial:  (window_size, n_vars, lat, lon) — anomalised + normalised
+            x_temporal: (window_size, 3)                — year_norm, month_sin, month_cos
+            y:          (1,)                            — normalised North Sea SST anomaly
         """
-        physical_vars = [v for v in self.variables if v not in ['target', 'land_mask']]
-        all_vars = [v for v in self.variables if v != 'target']
-        
-        x_ds = self.ds[all_vars].isel(time=idx).to_array().values
-        y_ds = self.ds["target"].isel(time=idx+self.offset).values
+        window_spatial  = []
+        window_temporal = []
 
-        input_data = torch.tensor(x_ds, dtype=torch.float32)  # [vars, lat, lon]
-        target_data = torch.tensor(y_ds, dtype=torch.float32).unsqueeze(0)
-        
-        land_mask = input_data[len(physical_vars)]
-        physical = input_data[:len(physical_vars)]
-        
-        #Normalize with nans to not take into account land pixels
-        tierra_mask = (land_mask == 0)
-        physical[:, tierra_mask] = float('nan')
-        
-        if self.normalize and hasattr(self, 'input_means'):
-            physical = (physical.float() - self.input_means.float()) / self.input_stds.float()
-        
-        # Nan to zero for the model
-        physical = torch.nan_to_num(physical, nan=0.0)
-        
-        input_data = torch.cat([physical, land_mask.unsqueeze(0)], dim=0)
-        
-        if self.add_temporal_features:
-            year_norm = (self.years[idx] - self.year_min) / (self.year_max - self.year_min)
-            month_sin = np.sin(2 * np.pi * self.months[idx] / 12)
-            month_cos = np.cos(2 * np.pi * self.months[idx] / 12)
-            
-            _, lat, lon = input_data.shape
-            year_channel = torch.ones(1, lat, lon) * year_norm
-            month_sin_channel = torch.ones(1, lat, lon) * month_sin
-            month_cos_channel = torch.ones(1, lat, lon) * month_cos
-            
-            input_data = torch.cat([input_data, year_channel, month_sin_channel, month_cos_channel], dim=0)
-        
-        input_data = input_data.float()
-        target_data = target_data.float()
-        return input_data.float(), target_data.float()
+        for t in range(idx, idx + self.window_size):
+            # --- Spatial frame ---
+            frame = torch.stack([self.data[v][t] for v in self.variables], dim=0)
 
+            # Land mask (ocean variables only)
+            for i, var in enumerate(self.variables):
+                if var in self.ocean_variables:
+                    frame[i, self.tierra_mask] = float("nan")
 
-    def get_class_balance(self):
-        n_pos = 0
-        n_total = len(self)
-        
-        for i in range(n_total):
-            _, y = self[i]
-            if y.item() == 1:
-                n_pos += 1
-            if (i+1) % 50 == 0:
-                print(f"  Progress: {i+1}/{n_total}")
-        
-        n_neg = n_total - n_pos
-        pos_weight = n_neg / n_pos if n_pos > 0 else 1.0
-        
-        print(f"\nClass balance:")
-        print(f"  Total samples: {n_total}")
-        print(f"  Positives (MHW): {n_pos} ({n_pos/n_total*100:.2f}%)")
-        print(f"  Negatives (no MHW): {n_neg} ({n_neg/n_total*100:.2f}%)")
-        print(f"  pos_weight recommended: {pos_weight:.2f}")
-        
-        return torch.tensor([pos_weight])
+            # Subtract day-of-year climatology (ERA5 variables only)
+            if self.clim_means:
+                doy = int(self.doys[t])
+                if doy >= 365:
+                    doy = 365
+                for i, var in enumerate(self.variables):
+                    if var in self.clim_means:
+                        frame[i] -= self.clim_means[var][doy - 1]
+
+            # Normalise
+            if self.normalize and self.input_means is not None:
+                frame = (frame - self.input_means) / self.input_stds
+
+            frame = torch.nan_to_num(frame, nan=0.0)
+            window_spatial.append(frame)
+
+            # --- Temporal features ---
+            year_norm = (self.years[t] - self.year_min) / (self.year_max - self.year_min)
+            month_sin = np.sin(2 * np.pi * self.months[t] / 12)
+            month_cos = np.cos(2 * np.pi * self.months[t] / 12)
+            window_temporal.append(
+                torch.tensor([year_norm, month_sin, month_cos], dtype=torch.float32)
+            )
+
+        x_spatial  = torch.stack(window_spatial,  dim=0)  # (window_size, n_vars, lat, lon)
+        x_temporal = torch.stack(window_temporal, dim=0)  # (window_size, 3)
+
+        target_idx = idx + self.window_size - 1 + self.lead_time
+        y_raw = self.target[target_idx]
+        y = ((y_raw - self.target_mean) / self.target_std).unsqueeze(0)
+
+        return x_spatial, x_temporal, y

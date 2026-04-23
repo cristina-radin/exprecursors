@@ -1,150 +1,97 @@
 """
-Training script for climate model.
+Training script for MHW precursor detection (CNN-LSTM + Temporal Attention).
 """
 
-import argparse
 from pathlib import Path
+import matplotlib.pyplot as plt
 import torch
-import yaml 
-
+import yaml
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import (
+    Callback,
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
 )
-from pytorch_lightning.loggers import TensorBoardLogger
-import yaml
+from pytorch_lightning.loggers import WandbLogger
 
 from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNModel
-from dataset import LazyDataset 
+from model import CNNLightningModule, CNNLSTMModel
 
 
-def parse_args():
-    """Parse command line arguments.
-    Ignore this for jupyter notebook usage
-    """
-    parser = argparse.ArgumentParser(description="Train climate model")
-    
-    # Data arguments
-    parser.add_argument(
-        "--data_dir",
-        type=str,
-        required=True,
-        help="Path or pattern to data files",
-    )
-    
-    # Model arguments
-    parser.add_argument(
-        "--in_channels",
-        type=int,
-        default=10,
-        help="Number of input channels",
-    )
-    parser.add_argument(
-        "--out_channels",
-        type=int,
-        default=1,
-        help="Number of output channels",
-    )
-    
-    # Training arguments
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=32,
-        help="Batch size",
-    )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=1e-3,
-        help="Learning rate",
-    )
-    parser.add_argument(
-        "--max_epochs",
-        type=int,
-        default=100,
-        help="Maximum number of epochs",
-    )
-    parser.add_argument(
-        "--num_workers",
-        type=int,
-        default=4,
-        help="Number of dataloader workers",
-    )
-    
-    # Other arguments
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="outputs",
-        help="Output directory for logs and checkpoints",
-    )
-    
-    return parser.parse_args()
+class LossCurvePlotCallback(Callback):
+    """Saves train/val loss curves as a PNG at the end of training."""
+
+    def __init__(self, output_dir: Path):
+        self.output_dir   = Path(output_dir)
+        self.train_losses = []
+        self.val_losses   = []
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        loss = trainer.callback_metrics.get("train_loss_epoch")
+        if loss is not None:
+            self.train_losses.append(float(loss))
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        loss = trainer.callback_metrics.get("val_loss")
+        if loss is not None:
+            self.val_losses.append(float(loss))
+
+    def on_train_end(self, trainer, pl_module):
+        epochs = range(1, len(self.train_losses) + 1)
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(epochs, self.train_losses, label="train_loss")
+        ax.plot(epochs, self.val_losses,   label="val_loss")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("MSE loss (normalised target)")
+        ax.set_title("Training and Validation Loss")
+        ax.legend()
+        plt.tight_layout()
+        path = self.output_dir / "loss_curves.png"
+        plt.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close()
+        print(f"\nLoss curves saved to {path}")
 
 
 def main():
-    with open("config.yaml", 'r') as f:
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.yaml")
+    args = parser.parse_args()
+
+    with open(args.config, "r") as f:
         config = yaml.safe_load(f)
-    
-    args = argparse.Namespace(**config)
-    
-    pl.seed_everything(args.seed)
-    torch.set_float32_matmul_precision('medium')
-    
-    # Create output directory
-    output_dir = Path(args.output_dir)
+
+    pl.seed_everything(config["seed"])
+    torch.set_float32_matmul_precision("medium")
+
+    output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Imbalanced classes
-    print("\nClasses balance...")
-    temp_dataset = LazyDataset(
-        file_name=args.data_dir,
-        variables=args.variables,
-        lazy_loading=True,
-        normalize=args.normalize,
-        add_temporal_features=args.add_temporal_features
-    )
-    pos_weight = temp_dataset.get_class_balance()
-    print(f"pos_weight calculated: {pos_weight.item():.2f}\n")
-    
-    datamodule = LazyDataModule(config_path="config.yaml")
-    
-    n_physical = len([v for v in args.variables if v not in ['target', 'land_mask']])
-    n_temporal = 3 if args.add_temporal_features else 0
-    in_channels = n_physical + 1 + n_temporal 
-    print(f"args.variables: {args.variables}")
-    print(f"n_physical: {n_physical} (vars: {[v for v in args.variables if v not in ['target', 'land_mask']]})")
-    print(f"n_temporal: {n_temporal}")
-    print(f"in_channels: {in_channels}")
 
-    model = CNNModel(
-        in_channels=in_channels,  
-        out_channels=args.out_channels,
+    datamodule = LazyDataModule(config_path=args.config)
+    datamodule.setup()
+
+    model = CNNLSTMModel(
+        in_channels=config["in_channels"],
+        cnn_features=config.get("cnn_features", 128),
+        lstm_hidden=config.get("lstm_hidden",   256),
+        lstm_layers=config.get("lstm_layers",     2),
+        temporal_features=3,
+        dropout=config.get("dropout", 0.3),
     )
 
-    # 6. Lightning module
     lightning_module = CNNLightningModule(
         model=model,
-        learning_rate=args.learning_rate,
-        pos_weight=pos_weight
+        learning_rate=config["learning_rate"],
+        target_mean=datamodule.target_mean,
+        target_std=datamodule.target_std,
     )
-    
-      # Set up callbacks
+
     callbacks = [
         ModelCheckpoint(
             dirpath=output_dir / "checkpoints",
-            filename="cnn-{epoch:02d}-{val_loss:.4f}",
+            filename="cnn-lstm-{epoch:02d}-{val_loss:.4f}",
             monitor="val_loss",
             mode="min",
             save_top_k=3,
@@ -155,29 +102,28 @@ def main():
             mode="min",
         ),
         LearningRateMonitor(logging_interval="epoch"),
+        LossCurvePlotCallback(output_dir),
     ]
-    
-    # Set up logger
-    logger = TensorBoardLogger(
-        save_dir=output_dir,
-        name="logs",
-    ) # we could also use wandb: https://wandb.ai/home
-    
-    # Initialize trainer
+
+    logger = WandbLogger(
+        entity="hereon-ksn-expercursors",
+        project="mhw-precursors",
+        save_dir=str(output_dir),
+        config=config,
+    )
+
     trainer = pl.Trainer(
-        max_epochs=args.max_epochs,
+        max_epochs=config["max_epochs"],
         callbacks=callbacks,
         logger=logger,
         accelerator="auto",
         devices="auto",
-        num_sanity_val_steps=0, 
+        num_sanity_val_steps=0,
     )
-    
-    # Train
+
     trainer.fit(lightning_module, datamodule=datamodule)
-    
-    # Test
     trainer.test(lightning_module, datamodule=datamodule)
+
 
 if __name__ == "__main__":
     main()

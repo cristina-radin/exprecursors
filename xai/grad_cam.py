@@ -1,175 +1,199 @@
+"""
+Attention-weighted Grad-CAM for CNN-LSTM + Temporal Attention.
+
+Strategy:
+  1. Hook the last Conv2d of the CNN encoder (before AdaptiveAvgPool).
+  2. Forward: collect CNN activations for all 60 frames + attention weights.
+  3. Backward: collect CNN gradients.
+  4. For each timestep t: cam_t = ReLU( mean_c(grad_t * act_t) )
+  5. Final map = sum_t( attn_t * cam_t )  →  upsampled to (lat, lon).
+"""
+
 import torch
-from torch import device
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 from pathlib import Path
-from .utils import load_config, get_feature_names
 
 
-class GradCAM:
-    """Grad-CAM implementation for PyTorch models"""
-    
-    def __init__(self, model, target_layer):
-        self.model = model
-        self.target_layer = target_layer
-        self.gradients = None
-        self.activations = None
-        
-        target_layer.register_forward_hook(self.save_activation)
-        target_layer.register_full_backward_hook(self.save_gradient)
-    
-    def save_activation(self, module, input, output):
-        self.activations = output.detach()
-    
-    def save_gradient(self, module, grad_input, grad_output):
-        self.gradients = grad_output[0].detach()
-    
-    def generate(self, x, class_idx=None):
-        output = self.model(x)
-        
-        if class_idx is None:
-            if output.shape[1] == 1:
-                class_idx = 0
-            else:
-                class_idx = output.argmax().item()
-        
+# ---------------------------------------------------------------------------
+# Grad-CAM engine
+# ---------------------------------------------------------------------------
+
+class AttentionGradCAM:
+    def __init__(self, lightning_module):
+        self.lm    = lightning_module
+        self.model = lightning_module.model
+        self._acts  = None
+        self._grads = None
+
+        target_layer = self._find_last_conv()
+        target_layer.register_forward_hook(self._save_act)
+        target_layer.register_full_backward_hook(self._save_grad)
+
+    def _find_last_conv(self):
+        last = None
+        for m in self.model.cnn_encoder.cnn:
+            if isinstance(m, torch.nn.Conv2d):
+                last = m
+        assert last is not None, "No Conv2d found in cnn_encoder"
+        return last
+
+    def _save_act(self, module, inp, out):
+        self._acts = out          # (batch*window, C, H', W')
+
+    def _save_grad(self, module, grad_in, grad_out):
+        self._grads = grad_out[0]  # (batch*window, C, H', W')
+
+    def compute(self, x_spatial, x_temporal):
+        """
+        Returns:
+            cam:          (lat, lon)  — attention-weighted spatial importance [0, 1]
+            attn_weights: (window,)   — temporal attention weights
+        """
+        # cuDNN LSTM requires the same backend for forward+backward.
+        # In eval mode backward is not supported, so disable cuDNN for both.
+        prev = torch.backends.cudnn.enabled
+        torch.backends.cudnn.enabled = False
         self.model.zero_grad()
-        one_hot = torch.zeros_like(output)
-        one_hot[0, class_idx] = 1
-        output.backward(gradient=one_hot, retain_graph=True)
-        
-        weights = self.gradients.mean(dim=(2, 3), keepdim=True)
-        cam = (weights * self.activations).sum(dim=1, keepdim=True)
-        cam = F.relu(cam)
-        
+        pred, attn = self.model.forward_with_attention(
+            x_spatial.float(), x_temporal.float()
+        )
+        pred.squeeze().backward()
+        torch.backends.cudnn.enabled = prev
+
+        window = x_spatial.shape[1]
+        lat    = x_spatial.shape[3]
+        lon    = x_spatial.shape[4]
+
+        acts   = self._acts.detach()    # (window, C, H', W')
+        grads  = self._grads.detach()
+        attn_w = attn.squeeze(0).detach()  # (window,)
+
+        cam = torch.zeros(acts.shape[2], acts.shape[3], device=acts.device)
+        for t in range(window):
+            w_t   = grads[t].mean(dim=(1, 2), keepdim=True)   # (C,1,1)
+            cam_t = F.relu((w_t * acts[t]).sum(dim=0))         # (H',W')
+            cam   = cam + attn_w[t] * cam_t
+
         cam = cam / (cam.max() + 1e-8)
-        cam = F.interpolate(cam, x.shape[2:], mode='bilinear', align_corners=False)
-        
-        return cam.squeeze().cpu().numpy()
+        cam = F.interpolate(
+            cam.unsqueeze(0).unsqueeze(0),
+            size=(lat, lon),
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze().cpu().numpy()
+
+        return cam, attn_w.cpu().numpy()
 
 
-def analyze_gradcam(model, dataset, output_dir, num_samples=5, config_path="/p/project1/hai_1127/radin1/exprecursors/config.yaml"):
-    device = next(model.parameters()).device
-    model.eval()
-    
-    config = load_config(config_path)
-    feature_names = get_feature_names(config)
-    
-    # land indexs
-    land_mask_idx = None
-    physical_vars = []
-    temporal_vars = []
-    
-    for i, name in enumerate(feature_names):
-        if name == 'land_mask':
-            land_mask_idx = i
-        elif name in ['year', 'month_sin', 'month_cos']:
-            temporal_vars.append(name)
-        else:
-            physical_vars.append(name)
-    
-    
-    mhw_indices = []
-    normal_indices = []
-    
-    for i in range(min(100, len(dataset))):
-        _, y = dataset[i]
-        if y.item() == 1 and len(mhw_indices) < num_samples:
-            mhw_indices.append(i)
-        elif y.item() == 0 and len(normal_indices) < num_samples:
-            normal_indices.append(i)
-        
-        if len(mhw_indices) >= num_samples and len(normal_indices) >= num_samples:
-            break
-    
-    # Last conv layer
-    target_layer = None
-    for module in model.model.network.modules():
-        if isinstance(module, torch.nn.Conv2d):
-            target_layer = module
-    
-    if target_layer is None:
-        print("Conv layer not found, using default target layer.")
-        target_layer = model.model.network[-6]
-    
-    results = {}
-    
-    for category, indices in [('MHW', mhw_indices), ('noMHW', normal_indices)]:
-        results[category] = []
-        for idx in indices:
-            x, y = dataset[idx]  # x shape: [channels, lat, lon]
-            x_batch = x.unsqueeze(0).to(device).float()
-            
-            with torch.no_grad():
-                logits = model(x_batch)
-                prob = torch.sigmoid(logits).item()
-            
-            gradcam = GradCAM(model, target_layer)
-            cam = gradcam.generate(x_batch)
-            
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
 
-            # Normalized gradcam for visualization
-            cam_normalized = cam.copy()
-            cam_normalized = cam_normalized / cam_normalized.max()  
+def _plot_cam(cam, xs_np, variables, ocean_vars, lat, lon, title, save_path):
+    """Row 0: last input frame per variable. Row 1: Grad-CAM."""
+    n_vars  = len(variables)
+    extent  = [lon.min(), lon.max(), lat.min(), lat.max()]
+    fig, axes = plt.subplots(2, n_vars, figsize=(4 * n_vars, 7))
+    if n_vars == 1:
+        axes = axes.reshape(2, 1)
+
+    for i, var in enumerate(variables):
+        frame = xs_np[-1, i].copy()   # last day of window, (lat, lon)
+        if var in ocean_vars:
+            frame = np.where(frame == 0, np.nan, frame)
+        vmax = np.nanpercentile(np.abs(frame), 98) or 1.0
+
+        ax0 = axes[0, i]
+        im0 = ax0.imshow(frame, origin="lower", extent=extent,
+                         cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+        ax0.set_title(var, fontsize=9)
+        ax0.set_xlabel("lon"); ax0.set_ylabel("lat")
+        plt.colorbar(im0, ax=ax0, fraction=0.03)
+
+        ax1 = axes[1, i]
+        im1 = ax1.imshow(cam, origin="lower", extent=extent,
+                         cmap="YlOrRd", vmin=0, vmax=1, aspect="auto")
+        ax1.set_title(f"Grad-CAM", fontsize=9)
+        ax1.set_xlabel("lon"); ax1.set_ylabel("lat")
+        plt.colorbar(im1, ax=ax1, fraction=0.03)
+
+    fig.suptitle(title, fontsize=10)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
 
 
-            if land_mask_idx is not None:
-                land_mask = x[land_mask_idx].cpu().numpy()  # 0=land, 1=ocean
-                cam = cam * land_mask  
-                
-                land_pixels = (land_mask == 0).sum()
-                if land_pixels > 0 and 'zos' in feature_names:
-                    zos_idx = feature_names.index('zos')
-            else:
-                print("Land_mask not founded")
-            
-            # PLOT
-            fig, axes = plt.subplots(2, len(physical_vars), figsize=(5*len(physical_vars), 8))
+def _plot_attention(attn_list, labels, save_path):
+    window = len(attn_list[0])
+    days   = np.arange(-window + 1, 1)   # -59 … 0
 
-            if len(physical_vars) == 1:
-                axes = axes.reshape(2, 1)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for attn, label in zip(attn_list, labels):
+        ax.plot(days, attn, alpha=0.7, label=label)
 
-            cmap_physical = plt.cm.RdBu_r.copy()
-            cmap_physical.set_bad("lightgray")  
+    ax.axvline(0, color="k", linestyle="--", linewidth=0.8, label="last input day")
+    ax.set_xlabel("Day relative to last input day")
+    ax.set_ylabel("Attention weight")
+    ax.set_title("Temporal attention weights")
+    ax.legend(fontsize=7, ncol=2)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
 
-            cmap_cam = plt.cm.jet.copy()
-            cmap_cam.set_bad("lightgray")  
 
-            for i, var_name in enumerate(physical_vars):
-                var_idx = feature_names.index(var_name)
-                
-                var_data = x[var_idx].cpu().numpy()
-                land_mask = x[land_mask_idx].cpu().numpy()
-                var_data_with_nan = var_data.copy()
-                var_data_with_nan[land_mask == 0] = np.nan
-                
-                im1 = axes[0, i].imshow(var_data_with_nan, cmap=cmap_physical, origin='lower')
-                axes[0, i].set_title(f'Input: {var_name}')
-                plt.colorbar(im1, ax=axes[0, i])
-                
-                cam_with_nan = cam_normalized.copy()
-                cam_with_nan[land_mask == 0] = np.nan
-                im2 = axes[1, i].imshow(cam_with_nan, cmap=cmap_cam, alpha=0.7, origin='lower', vmin=0, vmax=1)
-                #axes[1, i].imshow(var_data_with_nan, cmap=cmap_physical, alpha=0.7, origin='lower')
-                axes[1, i].set_title(f'Grad-CAM {var_name}')
-                plt.colorbar(im2, ax=axes[1, i])
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
 
-            plt.suptitle(f'{category} - index {idx} - Prob: {prob:.3f} - Real: {y.item()}')
-            plt.tight_layout()
+def analyze_gradcam(lightning_module, test_dataset, output_dir,
+                    n_samples, config, lat, lon):
+    device     = next(lightning_module.parameters()).device
+    variables  = config["variables"]
+    ocean_vars = set(config.get("ocean_variables", variables))
+    output_dir = Path(output_dir)
 
-            filename = Path(output_dir) / f'gradcam_{category}_idx{idx}_prob{prob:.2f}.png'
-            plt.savefig(filename, dpi=150, bbox_inches='tight')
-            plt.close()
-                        
-            results[category].append({
-                'idx': idx,
-                'prob': prob,
-                'true': y.item(),
-                'cam': cam,
-                'file': filename
-            })
-            
-            print(f"{category} {idx}: prob={prob:.3f}, true={y.item()}")
-    
-    return results
+    engine = AttentionGradCAM(lightning_module)
+    lightning_module.eval()
+
+    # Collect predictions on the test set
+    preds = []
+    for idx in range(len(test_dataset)):
+        xs, xt, _ = test_dataset[idx]
+        with torch.no_grad():
+            p, _ = lightning_module.model.forward_with_attention(
+                xs.unsqueeze(0).float().to(device),
+                xt.unsqueeze(0).float().to(device),
+            )
+        preds.append(p.item())
+    preds   = np.array(preds)
+    order   = np.argsort(preds)
+
+    selected = {
+        "high_anom": list(order[-n_samples:][::-1]),
+        "low_anom":  list(order[:n_samples]),
+    }
+
+    attn_all, labels_all = [], []
+
+    for category, idx_list in selected.items():
+        for rank, idx in enumerate(idx_list):
+            xs, xt, y_true = test_dataset[idx]
+            xs_dev = xs.unsqueeze(0).to(device)
+            xt_dev = xt.unsqueeze(0).to(device)
+
+            cam, attn = engine.compute(xs_dev, xt_dev)
+            label = (f"{category} #{rank+1}  "
+                     f"pred={preds[idx]:.2f}  true={y_true.item():.2f}")
+            attn_all.append(attn)
+            labels_all.append(label)
+
+            save_path = output_dir / f"gradcam_{category}_{rank+1}.png"
+            _plot_cam(cam, xs.numpy(), variables, ocean_vars,
+                      lat, lon, label, save_path)
+            print(f"  Saved {save_path.name}")
+
+    _plot_attention(attn_all, labels_all, output_dir / "attention_weights.png")
+    print("  Saved attention_weights.png")
+    return {"attn": attn_all, "labels": labels_all}

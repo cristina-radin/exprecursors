@@ -1,193 +1,126 @@
 """
-PyTorch Lightning DataModule for climate data.
+PyTorch Lightning DataModule for daily climate data.
+
+Split modes (config: split_mode):
+  "temporal"   — past→train, middle→val, future→test
+  "random"     — random split at sample level (leakage from autocorrelation)
+  "block_year" — years assigned randomly to splits; no sample overlap within
+                 a year, all periods represented in train (default)
 """
 
 from typing import Optional
-import torch
+import numpy as np
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Subset
-
-from dataset import LazyDataset
 import yaml
 
+from dataset import LazyDataset
 
 
 class LazyDataModule(pl.LightningDataModule):
-    """
-    Lightning DataModule for climate data.
-    
-    Args:
-        train_files: Path or pattern to training data files.
-        val_files: Path or pattern to validation data files. If none, will select randomly from train_files
-        test_files: Path or pattern to test data files.
-        batch_size: Batch size for dataloaders
-        num_workers: Number of workers for dataloaders
-        train_val_test_split: Tuple of (train, val, test) fractions
-        seed: Random seed for splitting
-    """
-    
+
     def __init__(
         self,
-                config_path: str = "/p/project1/hai_1127/radin1/exprecursors/config.yaml"  # ← ÚNICO parámetro
-            ):
+        config_path: str = "/p/project1/hai_1127/radin1/exprecursors/config.yaml",
+    ):
         super().__init__()
         self.save_hyperparameters()
-        
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
-            self.train_files = self.config['data_dir']
-            self.val_files = self.config.get('val_files')  # Opcional
-            self.test_files = self.config.get('test_files')  # Opcional
-            self.batch_size = self.config['batch_size']
-            self.num_workers = self.config['num_workers']
-            self.seed = self.config['seed']
-            self.variables = self.config['variables']
-            self.normalize = self.config['normalize']
-            self.lazy_loading = self.config.get('lazy_loading', False)
-            self.add_temporal_features = self.config['add_temporal_features']
-            
-            self.train_ratio = self.config['train_ratio']
-            self.val_ratio = self.config['val_ratio']
-            self.test_ratio = self.config['test_ratio']
-            
-            total = self.train_ratio + self.val_ratio + self.test_ratio
-            assert abs(total - 1.0) < 1e-6, f"Sum ratios {total}"
 
-            self.train_dataset = None
-            self.val_dataset = None
-            self.test_dataset = None
-            self.norm_stats = None
+        with open(config_path, "r") as f:
+            self.config = yaml.safe_load(f)
+
+        self.data_dir    = self.config["data_dir"]
+        self.batch_size  = self.config["batch_size"]
+        self.num_workers = self.config["num_workers"]
+        self.seed        = self.config["seed"]
+        self.train_ratio = self.config["train_ratio"]
+        self.val_ratio   = self.config["val_ratio"]
+        self.test_ratio  = self.config["test_ratio"]
+        self.split_mode  = self.config.get("split_mode", "block_year")
+
+        total = self.train_ratio + self.val_ratio + self.test_ratio
+        assert abs(total - 1.0) < 1e-6, f"Ratios must sum to 1.0, got {total}"
+
+        self.train_dataset = None
+        self.val_dataset   = None
+        self.test_dataset  = None
+        self.target_mean   = 0.0
+        self.target_std    = 1.0
 
     def setup(self, stage: Optional[str] = None) -> None:
-        """
-        Set up datasets for each stage (fit, validate, test, predict).
-        Currently, we load the full dataset and split it into train/val/test.
-        You could also provide separate datasets for each stage, but needs to be implemented.
-        
-        Args:
-            stage: Current stage ('fit', 'validate', 'test', or 'predict')
-        """
+        if self.train_dataset is not None:
+            return  # already set up — avoid reloading data on second call
 
-        self.stage = stage
+        full_ds    = LazyDataset(self.data_dir, config_path=self.hparams.config_path)
+        total_size = len(full_ds)
+        rng        = np.random.default_rng(self.seed)
 
-        if self.val_files is not None: #separate files for train/val/test
-            self.train_dataset = LazyDataset(
-                    self.train_files, 
-                    variables=self.variables,
-                    lazy_loading=self.lazy_loading,
-                    normalize=self.normalize
-                )
-            self.val_dataset = LazyDataset(
-                    self.val_files, 
-                    variables=self.variables,
-                    lazy_loading=self.lazy_loading,
-                    normalize=self.normalize
-                )
-            if self.test_files is not None:
-                self.test_dataset = LazyDataset(
-                    self.test_files, 
-                    variables=self.variables,
-                    lazy_loading=self.lazy_loading,
-                    normalize=self.normalize
-                )    
+        if self.split_mode == "block_year":
+            # Year of the TARGET for each sample
+            target_years = np.array([
+                int(full_ds.years[i + full_ds.window_size - 1 + full_ds.lead_time])
+                for i in range(total_size)
+            ])
 
-            if self.normalize:
-                if not hasattr(self.train_dataset, 'input_means'):
-                    self.train_dataset._compute_stats()
-                
-                for dataset in [self.val_dataset, self.test_dataset]:
-                    if dataset is not None:
-                        dataset.input_means = self.train_dataset.input_means
-                        dataset.input_stds = self.train_dataset.input_stds
-                        dataset.normalize = True
+            unique_years   = np.unique(target_years)
+            n_years        = len(unique_years)
+            shuffled_years = rng.permutation(unique_years)
 
-                    
-        else : #current case, just 1 file for train/val/test # SPLIT TEMPORAL
-              
-            full_ds = LazyDataset(
-            self.train_files, 
-            variables=self.variables,
-            lazy_loading=self.lazy_loading,
-            normalize=self.normalize,
-            )
-        
-            if self.normalize and not hasattr(full_ds, 'input_means'):
-                full_ds._compute_stats()
-            
-            # Calculate split sizes 
-            total_size = len(full_ds)
-            train_size = int(self.train_ratio * total_size)
-            val_size = int(self.val_ratio * total_size)
-            test_size = total_size - train_size - val_size
+            n_train = int(self.train_ratio * n_years)
+            n_val   = int(self.val_ratio   * n_years)
 
-            #temporal indexes for splitting
+            train_years = set(shuffled_years[:n_train])
+            val_years   = set(shuffled_years[n_train:n_train + n_val])
+            test_years  = set(shuffled_years[n_train + n_val:])
+
+            train_indices = [i for i in range(total_size) if target_years[i] in train_years]
+            val_indices   = [i for i in range(total_size) if target_years[i] in val_years]
+            test_indices  = [i for i in range(total_size) if target_years[i] in test_years]
+
+            split_label = (f"Block-year split  "
+                           f"(train {n_train} yrs, val {n_val} yrs, "
+                           f"test {n_years - n_train - n_val} yrs)")
+
+        elif self.split_mode == "random":
+            train_size    = int(self.train_ratio * total_size)
+            val_size      = int(self.val_ratio   * total_size)
+            train_indices = sorted(rng.choice(total_size, size=train_size, replace=False))
+            remaining     = sorted(set(range(total_size)) - set(train_indices))
+            remaining_arr = np.array(remaining)
+            rng.shuffle(remaining_arr)
+            val_indices   = sorted(remaining_arr[:val_size].tolist())
+            test_indices  = sorted(remaining_arr[val_size:].tolist())
+            split_label   = "Random split"
+
+        else:  # temporal
+            train_size    = int(self.train_ratio * total_size)
+            val_size      = int(self.val_ratio   * total_size)
             train_indices = list(range(0, train_size))
-            val_indices = list(range(train_size, train_size + val_size))
-            test_indices = list(range(train_size + val_size, total_size))
+            val_indices   = list(range(train_size, train_size + val_size))
+            test_indices  = list(range(train_size + val_size, total_size))
+            split_label   = "Temporal split"
 
-            #testing that the splits are disjoint
-            assert len(set(train_indices) & set(val_indices)) == 0
-            assert len(set(train_indices) & set(test_indices)) == 0
-            assert len(set(val_indices) & set(test_indices)) == 0
+        full_ds.compute_stats(train_indices)
+        self.target_mean = full_ds.target_mean
+        self.target_std  = full_ds.target_std
 
-            #subsets with temporal splits
-            self.train_dataset = Subset(full_ds, train_indices)
-            self.val_dataset = Subset(full_ds, val_indices)
-            self.test_dataset = Subset(full_ds, test_indices)
+        self.train_dataset = Subset(full_ds, train_indices)
+        self.val_dataset   = Subset(full_ds, val_indices)
+        self.test_dataset  = Subset(full_ds, test_indices)
 
+        print(f"\n{split_label} (mode='{self.split_mode}'):")
+        print(f"  Train: {len(train_indices)} samples")
+        print(f"  Val:   {len(val_indices)} samples")
+        print(f"  Test:  {len(test_indices)} samples")
 
-            print(f"\n SPLIT TEMPORAL:")
-            print(f"  Total samples: {total_size}")
-            print(f"  Train (past): {train_size} samples (indexes 0-{train_size-1})")
-            print(f"  Val (intermediate): {val_size} samples (indexes {train_size}-{train_size+val_size-1})")
-            print(f"  Test (future): {test_size} samples (indexes {train_size+val_size}-{total_size-1})")
-            print(f"  Percentages: train={train_size/total_size:.1%}, val={val_size/total_size:.1%}, test={test_size/total_size:.1%}\n")
-            
-
-            
-            if self.normalize and hasattr(full_ds, 'input_means'):
-                for subset in [self.train_dataset, self.val_dataset, self.test_dataset]:
-                    subset.dataset.input_means = full_ds.input_means
-                    subset.dataset.input_stds = full_ds.input_stds
-
-        if self.test_files is not None:
-            self.test_dataset = LazyDataset(
-                self.test_files, 
-                variables=self.variables,
-                lazy_loading=self.lazy_loading,
-                normalize=self.normalize
-            )
-        elif self.test_dataset is None and stage == 'test':
-            raise ValueError("Test files must be provided for test stage.")
-        
-
-    
     def train_dataloader(self) -> DataLoader:
-        """Return training dataloader."""
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-        )
-    
+        return DataLoader(self.train_dataset, batch_size=self.batch_size,
+                          shuffle=True, num_workers=self.num_workers)
+
     def val_dataloader(self) -> DataLoader:
-        """Return validation dataloader."""
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-        )
-    
+        return DataLoader(self.val_dataset, batch_size=self.batch_size,
+                          shuffle=False, num_workers=self.num_workers)
+
     def test_dataloader(self) -> DataLoader:
-        """Return test dataloader."""
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-        )
-
-
-
+        return DataLoader(self.test_dataset, batch_size=self.batch_size,
+                          shuffle=False, num_workers=self.num_workers)
