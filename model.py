@@ -120,6 +120,7 @@ class CNNLSTMModel(nn.Module):
     ):
         super().__init__()
 
+        self.temporal_features = temporal_features
         self.cnn_encoder = CNNEncoder(in_channels, out_features=cnn_features)
 
         self.lstm = nn.LSTM(
@@ -132,7 +133,7 @@ class CNNLSTMModel(nn.Module):
 
         self.attention = TemporalAttention(lstm_hidden)
 
-        # FC head: attended spatial features + temporal features → scalar
+        # FC head: attended spatial features (+ temporal features if any) → scalar
         self.fc = nn.Sequential(
             nn.Linear(lstm_hidden + temporal_features, 64),
             nn.ReLU(),
@@ -165,11 +166,11 @@ class CNNLSTMModel(nn.Module):
         # Temporal attention
         context = self.attention(lstm_out)               # (batch, lstm_hidden)
 
-        # Summarize temporal features: mean over window → (batch, 3)
-        temporal_summary = x_temporal.mean(dim=1)
-
-        # Concatenate and predict
-        combined = torch.cat([context, temporal_summary], dim=-1)
+        if self.temporal_features > 0:
+            temporal_summary = x_temporal.mean(dim=1)
+            combined = torch.cat([context, temporal_summary], dim=-1)
+        else:
+            combined = context
         return self.fc(combined)                         # (batch, 1)
 
     def forward_with_attention(
@@ -194,8 +195,11 @@ class CNNLSTMModel(nn.Module):
         attn_weights = torch.softmax(scores, dim=-1)               # (batch, window)
         context      = (lstm_out * attn_weights.unsqueeze(-1)).sum(dim=1)
 
-        temporal_summary = x_temporal.mean(dim=1)
-        combined         = torch.cat([context, temporal_summary], dim=-1)
+        if self.temporal_features > 0:
+            temporal_summary = x_temporal.mean(dim=1)
+            combined = torch.cat([context, temporal_summary], dim=-1)
+        else:
+            combined = context
         return self.fc(combined), attn_weights
 
 
@@ -211,6 +215,7 @@ class CNNLightningModule(pl.LightningModule):
         learning_rate: float = 1e-3,
         target_mean: float = 0.0,
         target_std: float = 1.0,
+        loss_fn: str = "MSELoss",
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -219,7 +224,7 @@ class CNNLightningModule(pl.LightningModule):
         self.learning_rate = learning_rate
         self.target_mean   = target_mean
         self.target_std    = target_std
-        self.loss_fn       = nn.MSELoss()
+        self.loss_fn       = nn.L1Loss() if loss_fn == "MAELoss" else nn.MSELoss()
 
         self.test_mae  = MeanAbsoluteError()
         self.test_corr = PearsonCorrCoef()

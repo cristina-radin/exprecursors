@@ -128,8 +128,8 @@ def fig_ablation(seeds, out_dir):
 
     ets_mean, ets_std, r_mean, r_std = [], [], [], []
     for exp in exps:
-        s = seeds if exp == "TbotAtm" else (42,)
-        m, sd = get_metrics(exp, seeds=s, split="VAL")
+        s = seeds
+        m, sd = get_metrics(exp, seeds=s, split="TEST")
         if m is None:
             ets_mean.append(np.nan); ets_std.append(0)
             r_mean.append(np.nan);   r_std.append(0)
@@ -168,8 +168,8 @@ def fig_ablation(seeds, out_dir):
             ax.grid(axis="y", alpha=0.3)
 
         n_seeds = len(seeds)
-        note = f"VAL split  |  TbotAtm: mean over {n_seeds} random split{'s' if n_seeds>1 else ''} (seeds {', '.join(str(s) for s in seeds)})" \
-               if n_seeds > 1 else "VAL split (seed=42)"
+        note = f"TEST split  |  mean over {n_seeds} random splits (seeds {', '.join(str(s) for s in seeds)})" \
+               if n_seeds > 1 else f"TEST split (seed={seeds[0]})"
         fig.suptitle(f"MHW prediction skill by input variables — 7-day lead\n{note}",
                      fontsize=13, y=1.02)
         plt.tight_layout()
@@ -189,8 +189,8 @@ def fig_metrics_table(seeds, out_dir):
 
     rows_mean, rows_std = [], []
     for exp in exps:
-        s = seeds if exp == "TbotAtm" else (42,)
-        m, sd = get_metrics(exp, seeds=s, split="VAL")
+        s = seeds
+        m, sd = get_metrics(exp, seeds=s, split="TEST")
         if m is None:
             rows_mean.append([np.nan]*5); rows_std.append([0]*5)
         else:
@@ -243,7 +243,7 @@ def fig_metrics_table(seeds, out_dir):
         table.auto_set_font_size(False)
         table.set_fontsize(13)
         table.scale(1.4, 2.2)
-        ax.set_title("Skill metrics on VAL split  (threshold: to_anom > 0 → MHW)",
+        ax.set_title("Skill metrics on TEST split  (threshold: to_anom > 0 → MHW)",
                      fontsize=13, pad=20)
         plt.tight_layout()
         p = out_dir / "fig_metrics_table.png"

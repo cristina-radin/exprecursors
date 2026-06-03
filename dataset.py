@@ -44,9 +44,11 @@ class LazyDataset(Dataset):
         self.normalize       = config.get("normalize", True)
         self.window_size     = config.get("window_size", 60)
         self.lead_time       = config.get("lead_time", 7)
-        self.clim_ref_start  = config.get("clim_ref_start", 1985)
-        self.clim_ref_end    = config.get("clim_ref_end",   2014)
-        self.clim_window     = config.get("clim_window",    5)
+        self.clim_ref_start    = config.get("clim_ref_start", 1985)
+        self.clim_ref_end      = config.get("clim_ref_end",   2014)
+        self.clim_window       = config.get("clim_window",    5)
+        self.detrend_variables = set(config.get("detrend_variables", []))
+        self.detrend_target    = config.get("detrend_target", False)
 
         self.ds = xr.open_mfdataset(file_name, parallel=True)
 
@@ -79,11 +81,13 @@ class LazyDataset(Dataset):
         print(f"  Samples: {len(self)}")
 
         # Stats — overwritten by compute_stats()
-        self.clim_means  = {}   # var → (365, lat, lon) climatology
-        self.input_means = None
-        self.input_stds  = None
-        self.target_mean = 0.0
-        self.target_std  = 1.0
+        self.clim_means   = {}   # var → (365, lat, lon) climatology
+        self.trend_slopes = {}   # var → (lat, lon)  linear trend slope [units/day]
+        self.trend_ref_t  = 0    # reference timestep index for trend centering
+        self.input_means  = None
+        self.input_stds   = None
+        self.target_mean  = 0.0
+        self.target_std   = 1.0
 
     # ------------------------------------------------------------------
     # Climatology
@@ -133,6 +137,61 @@ class LazyDataset(Dataset):
             print(f"  {var}: clim mean={clim.mean():.4f}, std={clim.std():.4f}")
 
     # ------------------------------------------------------------------
+    # Linear detrending (pixel-wise, full period)
+    # ------------------------------------------------------------------
+
+    def _compute_trend(self) -> None:
+        """
+        Fit a pixel-wise linear trend over the full dataset period for each
+        variable listed in self.detrend_variables, AFTER climatology removal.
+
+        The trend (slope) is stored in self.trend_slopes so it can be
+        subtracted in __getitem__: anomaly_detrended = anomaly - slope*(t - t_ref)
+        where t is the timestep index and t_ref = midpoint of the series.
+
+        This removes long-term drift (e.g. warming trend in ptho_bot) while
+        preserving interannual variability.
+        """
+        if not self.detrend_variables:
+            return
+
+        T = len(self.doys)
+        t = np.arange(T, dtype=np.float32)
+        self.trend_ref_t = float(t.mean())   # center to avoid large intercepts
+
+        print(f"\nComputing pixel-wise linear trend for: {sorted(self.detrend_variables)}")
+
+        for var in self.detrend_variables:
+            if var not in self.data:
+                print(f"  {var}: not in variables, skipping")
+                continue
+
+            data = self.data[var].numpy().astype(np.float32)  # (T, lat, lon)
+
+            # Subtract climatology first so trend is on anomalies
+            if var in self.clim_means:
+                doys = self.doys.copy()
+                doys[doys == 366] = 365
+                for i, doy in enumerate(doys):
+                    data[i] -= self.clim_means[var][doy - 1].numpy()
+
+            lat, lon = data.shape[1], data.shape[2]
+            t_c = t - self.trend_ref_t  # centered time axis
+
+            # Vectorised OLS: slope = cov(t,x) / var(t)
+            t_var  = float((t_c ** 2).mean())
+            slopes = np.zeros((lat, lon), dtype=np.float32)
+            for i in range(lat):
+                for j in range(lon):
+                    pixel = data[:, i, j]
+                    if np.isfinite(pixel).all():
+                        slopes[i, j] = float((t_c * pixel).mean()) / t_var
+
+            self.trend_slopes[var] = torch.tensor(slopes, dtype=torch.float32)
+            print(f"  {var}: mean slope={slopes.mean():.6f}/day  "
+                  f"({slopes.mean()*3650:.4f} per decade)")
+
+    # ------------------------------------------------------------------
     # Normalisation stats (call after split)
     # ------------------------------------------------------------------
 
@@ -148,6 +207,7 @@ class LazyDataset(Dataset):
 
         # Step 1 — climatology (reference period, independent of split)
         self._compute_clim()
+        self._compute_trend()
 
         # Step 2 — mean/std on training time span
         t_start = min(train_indices)
@@ -181,6 +241,23 @@ class LazyDataset(Dataset):
 
         self.input_means = torch.tensor(means, dtype=torch.float32).view(-1, 1, 1)
         self.input_stds  = torch.tensor(stds,  dtype=torch.float32).view(-1, 1, 1)
+
+        # Detrend target (full period, pixel-wise scalar)
+        if self.detrend_target:
+            T      = len(self.target)
+            t      = np.arange(T, dtype=np.float64)
+            t_c    = t - t.mean()
+            target_np = self.target.numpy().astype(np.float64)
+            slope  = float((t_c * target_np).mean() / (t_c ** 2).mean())
+            self.target_trend_slope = slope
+            self.target_trend_ref_t = float(t.mean())
+            self.target = torch.tensor(
+                target_np - slope * t_c, dtype=torch.float32
+            )
+            print(f"  target detrended: slope={slope*3650:.4f}/decade")
+        else:
+            self.target_trend_slope = 0.0
+            self.target_trend_ref_t = 0.0
 
         # Target stats from training target timestamps
         target_idx_list  = [i + self.window_size - 1 + self.lead_time
@@ -222,6 +299,13 @@ class LazyDataset(Dataset):
                 for i, var in enumerate(self.variables):
                     if var in self.clim_means:
                         frame[i] -= self.clim_means[var][doy - 1]
+
+            # Subtract linear trend (detrend_variables only)
+            if self.trend_slopes:
+                t_c = float(t) - self.trend_ref_t
+                for i, var in enumerate(self.variables):
+                    if var in self.trend_slopes:
+                        frame[i] -= self.trend_slopes[var] * t_c
 
             # Normalise
             if self.normalize and self.input_means is not None:

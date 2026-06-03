@@ -37,6 +37,45 @@ def _integrated_gradients(lightning_module, x_spatial, x_temporal, n_steps=50):
     return attributions.cpu()
 
 
+def _integrated_gradients_full(lightning_module, x_spatial, x_temporal, n_steps=50):
+    """
+    Like _integrated_gradients but also attributes x_temporal (year_norm, month_sin, month_cos).
+
+    Returns:
+        attr_spatial:  (window, n_vars, lat, lon) — same as _integrated_gradients
+        attr_temporal: (window, 3)               — [year_norm, month_sin, month_cos]
+    """
+    baseline_s = torch.zeros_like(x_spatial)
+    baseline_t = torch.zeros_like(x_temporal)
+    grads_s, grads_t = [], []
+
+    prev = torch.backends.cudnn.enabled
+    torch.backends.cudnn.enabled = False
+
+    for step in range(n_steps):
+        alpha    = step / (n_steps - 1)
+        interp_s = (baseline_s + alpha * (x_spatial  - baseline_s)).requires_grad_(True)
+        interp_t = (baseline_t + alpha * (x_temporal - baseline_t)).requires_grad_(True)
+
+        pred, _ = lightning_module.model.forward_with_attention(
+            interp_s.float(), interp_t.float()
+        )
+        pred.squeeze().backward()
+
+        grads_s.append(interp_s.grad.detach().squeeze(0).clone())
+        grads_t.append(interp_t.grad.detach().squeeze(0).clone())
+
+    torch.backends.cudnn.enabled = prev
+
+    avg_grads_s = torch.stack(grads_s).mean(dim=0)
+    avg_grads_t = torch.stack(grads_t).mean(dim=0)
+
+    attr_spatial  = (x_spatial.squeeze(0)  - baseline_s.squeeze(0)) * avg_grads_s
+    attr_temporal = (x_temporal.squeeze(0) - baseline_t.squeeze(0)) * avg_grads_t
+
+    return attr_spatial.cpu(), attr_temporal.cpu()
+
+
 def analyze_integrated_gradients(lightning_module, test_dataset, output_dir,
                                   n_samples, config, lat, lon):
     device     = next(lightning_module.parameters()).device

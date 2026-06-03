@@ -77,7 +77,7 @@ def main():
         cnn_features=config.get("cnn_features", 128),
         lstm_hidden=config.get("lstm_hidden",   256),
         lstm_layers=config.get("lstm_layers",     2),
-        temporal_features=3,
+        temporal_features=config.get("temporal_features", 3),
         dropout=config.get("dropout", 0.3),
     )
 
@@ -86,6 +86,7 @@ def main():
         learning_rate=config["learning_rate"],
         target_mean=datamodule.target_mean,
         target_std=datamodule.target_std,
+        loss_fn=config.get("loss_fn", "MSELoss"),
     )
 
     callbacks = [

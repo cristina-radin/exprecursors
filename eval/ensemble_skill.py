@@ -55,7 +55,7 @@ def load_model(ckpt_path: Path, config: dict, device: str):
         cnn_features=config.get("cnn_features", 128),
         lstm_hidden=config.get("lstm_hidden",   256),
         lstm_layers=config.get("lstm_layers",     2),
-        temporal_features=3,
+        temporal_features=config.get("temporal_features", 3),
         dropout=config.get("dropout", 0.3),
     )
     lm = CNNLightningModule.load_from_checkpoint(
