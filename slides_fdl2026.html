@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MHW Precursor Detection — FDL 2026</title>
+
+  <!-- Reveal.js from CDN -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/night.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css" />
+
+  <style>
+    :root {
+      --accent:  #4fc3f7;
+      --accent2: #ef9a9a;
+      --accent3: #a5d6a7;
+      --dim:     #888;
+    }
+
+    .reveal { font-family: 'Segoe UI', Arial, sans-serif; }
+    .reveal h1 { font-size: 1.7em; color: var(--accent); margin-bottom: 0.2em; }
+    .reveal h2 { font-size: 1.2em; color: var(--accent); border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 0.4em; }
+    .reveal h3 { font-size: 0.95em; color: var(--accent2); margin-bottom: 0.2em; margin-top: 0; }
+    .reveal p, .reveal li { font-size: 0.68em; line-height: 1.4; margin: 0.15em 0; }
+    .reveal ul { margin-left: 0.8em; }
+    .reveal code { background: #222; padding: 1px 5px; border-radius: 4px; font-size: 0.82em; }
+    .reveal pre code { font-size: 0.62em; line-height: 1.3; }
+    .reveal pre { margin: 0.3em 0; }
+
+    /* Layout helpers */
+    .cols { display: flex; gap: 0.8em; align-items: flex-start; }
+    .col  { flex: 1; }
+    .col2 { flex: 2; }
+    .box  {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 0.35em 0.6em;
+      margin-bottom: 0.35em;
+    }
+    .box-blue  { border-left: 4px solid var(--accent);  background: rgba(79,195,247,0.07); }
+    .box-red   { border-left: 4px solid var(--accent2); background: rgba(239,154,154,0.07); }
+    .box-green { border-left: 4px solid var(--accent3); background: rgba(165,214,167,0.07); }
+
+    .tag {
+      display: inline-block;
+      background: #2a4a6b;
+      color: var(--accent);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.65em;
+      margin: 2px;
+    }
+    .tag-red   { background: #5a2a2a; color: var(--accent2); }
+    .tag-green { background: #2a4a2a; color: var(--accent3); }
+
+    .flow {
+      display: flex;
+      align-items: center;
+      gap: 0.3em;
+      flex-wrap: wrap;
+      font-size: 0.65em;
+      margin: 0.3em 0;
+    }
+    .flow-box {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid #555;
+      border-radius: 6px;
+      padding: 0.25em 0.5em;
+      text-align: center;
+      line-height: 1.3;
+    }
+    .flow-arrow { color: var(--accent); font-size: 1.1em; }
+
+    table { font-size: 0.62em; width: 100%; border-collapse: collapse; }
+    th { background: #1a3a4a; color: var(--accent); padding: 4px 8px; }
+    td { padding: 3px 8px; border-bottom: 1px solid #333; }
+    tr:hover td { background: rgba(255,255,255,0.04); }
+
+    .subtitle { color: #aaa; font-size: 0.7em; margin-top: 0.3em; }
+    .highlight { color: var(--accent); font-weight: bold; }
+    .dim-text  { color: var(--dim); font-size: 0.7em; }
+
+    .center { text-align: center; }
+    .mono { font-family: monospace; font-size: 0.85em; }
+  </style>
+</head>
+
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- =====================================================================
+     SLIDE 1 — TITLE
+     ===================================================================== -->
+<section>
+  <h1>Marine Heatwave<br>Precursor Detection</h1>
+  <p class="subtitle">CNN-LSTM + Temporal Attention with Explainability</p>
+  <br>
+  <div class="cols" style="justify-content: center; gap: 2em;">
+    <div class="box box-blue center" style="min-width: 160px;">
+      <div style="font-size:1.8em;">🌊</div>
+      <div style="color:var(--accent); font-size:0.75em;">North Sea / Levante</div>
+    </div>
+    <div class="box box-blue center" style="min-width: 160px;">
+      <div style="font-size:1.8em;">🧠</div>
+      <div style="color:var(--accent); font-size:0.75em;">Deep Learning + XAI</div>
+    </div>
+    <div class="box box-blue center" style="min-width: 160px;">
+      <div style="font-size:1.8em;">📡</div>
+      <div style="color:var(--accent); font-size:0.75em;">ICON-COAST + ERA5</div>
+    </div>
+  </div>
+  <br>
+  <p class="dim-text center">FDL 2026 — Technical Interview</p>
+</section>
+
+<!-- =====================================================================
+     SLIDE 2 — SCIENTIFIC PROBLEM
+     ===================================================================== -->
+<section>
+  <h2>The Problem</h2>
+  <div class="cols">
+    <div class="col2">
+      <div class="box box-red">
+        <h3>What is a Marine Heatwave?</h3>
+        <p>A period when SST exceeds the <strong>90th percentile</strong> of the local climatology
+        (ref. 1985–2014) for ≥5 consecutive days.</p>
+        <p>In 2023: <span class="highlight">146 / 365 days</span> were MHW days (~40%) — unprecedented signal.</p>
+      </div>
+      <div class="box box-blue">
+        <h3>Research Question</h3>
+        <p>Can we predict the <strong>SST anomaly</strong> N days in advance from
+        atmospheric + oceanic precursors?</p>
+        <p>And — <em>which variables and regions drive the prediction?</em></p>
+      </div>
+    </div>
+    <div class="col">
+      <div class="box">
+        <h3>Target variable</h3>
+        <p class="mono">to_anom = SST − clim_90th</p>
+        <p>Negative → normal conditions<br>Positive → MHW conditions</p>
+        <br>
+        <h3>Lead times</h3>
+        <p>Configurable — tested at 7 days</p>
+        <br>
+        <h3>Domain</h3>
+        <p>North Sea / Levante<br>141 × 201 grid cells (~0.05°)</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 3 — DATA
+     ===================================================================== -->
+<section>
+  <h2>Data</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="box box-blue">
+        <h3>Input variables (5)</h3>
+        <table>
+          <tr><th>Variable</th><th>Source</th><th>Type</th></tr>
+          <tr><td><code>to_anom</code></td><td>ICON-COAST</td><td>Ocean SST anomaly</td></tr>
+          <tr><td><code>u10</code></td><td>ERA5</td><td>10m zonal wind</td></tr>
+          <tr><td><code>v10</code></td><td>ERA5</td><td>10m meridional wind</td></tr>
+          <tr><td><code>msl</code></td><td>ERA5</td><td>Mean sea-level pressure</td></tr>
+          <tr><td><code>ssr</code></td><td>ERA5</td><td>Surface solar radiation</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="col">
+      <div class="box box-green">
+        <h3>Anomalisation strategy</h3>
+        <p><code>to_anom</code> — already an anomaly from ICON-COAST preprocessing (CDO <em>ydrunmean,5</em>, ref 1985–2014). <strong>Left unchanged.</strong></p>
+        <p><code>u10, v10, msl, ssr</code> — ERA5 absolute values. Day-of-year climatology subtracted in the dataset, using the <strong>same</strong> 5-day running window and reference period → consistent with <code>to_anom</code>.</p>
+      </div>
+      <div class="box">
+        <h3>Land mask</h3>
+        <p>Applied to ocean variables only. NaN → 0.0 before entering the CNN (zero-value is neutral after normalisation).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 4 — ARCHITECTURE OVERVIEW
+     ===================================================================== -->
+<section>
+  <h2>Architecture Overview</h2>
+  <p style="color:#aaa; font-size:0.72em; margin-bottom: 0.8em;">
+    Input shape: <code>(batch, 60 days, 5 vars, 141 lat, 201 lon)</code>
+  </p>
+
+  <div class="flow" style="justify-content: center; font-size: 0.8em;">
+    <div class="flow-box" style="border-color: var(--accent2);">
+      Spatial input<br>
+      <span style="color:var(--dim);">(B, 60, 5, 141, 201)</span>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box" style="border-color: var(--accent2);">
+      <strong style="color:var(--accent2);">CNN Encoder</strong><br>
+      <span style="color:var(--dim);">×60 frames</span><br>
+      <span style="color:var(--dim);">(B, 60, 128)</span>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box" style="border-color: var(--accent);">
+      <strong style="color:var(--accent);">LSTM</strong><br>
+      <span style="color:var(--dim);">2 layers</span><br>
+      <span style="color:var(--dim);">(B, 60, 256)</span>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box" style="border-color: var(--accent3);">
+      <strong style="color:var(--accent3);">Attention</strong><br>
+      <span style="color:var(--dim);">Bahdanau</span><br>
+      <span style="color:var(--dim);">(B, 256)</span>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">
+      + temporal<br>
+      <span style="color:var(--dim);">(B, 259)</span>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box" style="border-color: #ffcc80;">
+      <strong style="color:#ffcc80;">FC head</strong><br>
+      <span style="color:var(--dim);">(B, 1)</span>
+    </div>
+  </div>
+
+  <div class="cols" style="margin-top: 1em;">
+    <div class="col box box-red">
+      <h3>CNN Encoder</h3>
+      <p>4 × Conv2d + BN + ReLU + Pool<br>
+      32 → 64 → 128 → 256 channels<br>
+      <code>AdaptiveAvgPool</code> → global scene summary<br>
+      141×201 → single 128-dim vector</p>
+    </div>
+    <div class="col box box-blue">
+      <h3>LSTM</h3>
+      <p>Processes the 60-day sequence of CNN features<br>
+      hidden_size=256, 2 stacked layers<br>
+      Returns hidden state at <em>every</em> timestep (needed for attention)</p>
+    </div>
+    <div class="col box box-green">
+      <h3>Temporal Attention</h3>
+      <p>Linear(256→1) scores each day<br>
+      Softmax → interpretable weights<br>
+      Weighted sum → context vector<br>
+      <em>Reveals which past days matter</em></p>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 5 — CNN ENCODER DETAIL
+     ===================================================================== -->
+<section>
+  <h2>CNN Encoder — Layer by Layer</h2>
+  <p class="dim-text">Input: <code>(batch×60, 5, 141, 201)</code> — each of the 60 days processed independently</p>
+
+  <table style="margin-top: 0.5em;">
+    <tr>
+      <th>Block</th>
+      <th>Layer</th>
+      <th>Output shape</th>
+      <th>Purpose</th>
+    </tr>
+    <tr>
+      <td rowspan="3"><strong>Block 1</strong></td>
+      <td>Conv2d(5→32, k=3, pad=1) + BN + ReLU</td>
+      <td><code>B, 32, 141, 201</code></td>
+      <td>Local patterns (thermal fronts, wind gradients)</td>
+    </tr>
+    <tr>
+      <td>MaxPool2d(2)</td>
+      <td><code>B, 32, 70, 100</code></td>
+      <td>Spatial downsampling ÷2</td>
+    </tr>
+    <tr style="border-bottom: 2px solid #444;">
+      <td colspan="3" class="dim-text">BatchNorm stabilises training; MaxPool gives translation invariance</td>
+    </tr>
+    <tr>
+      <td><strong>Block 2</strong></td>
+      <td>Conv2d(32→64) + BN + ReLU + MaxPool</td>
+      <td><code>B, 64, 35, 50</code></td>
+      <td>Combines low-level patterns into larger structures</td>
+    </tr>
+    <tr>
+      <td><strong>Block 3</strong></td>
+      <td>Conv2d(64→128) + BN + ReLU + MaxPool</td>
+      <td><code>B, 128, 17, 25</code></td>
+      <td>Basin-scale structures</td>
+    </tr>
+    <tr>
+      <td><strong>Block 4</strong></td>
+      <td>Conv2d(128→256) + BN + ReLU</td>
+      <td><code>B, 256, 17, 25</code></td>
+      <td>High-level abstract features</td>
+    </tr>
+    <tr>
+      <td><strong>Pool</strong></td>
+      <td>AdaptiveAvgPool2d(1,1) + Flatten</td>
+      <td><code>B, 256</code></td>
+      <td>Global average — summarises entire scene</td>
+    </tr>
+    <tr>
+      <td><strong>FC</strong></td>
+      <td>Linear(256→128)</td>
+      <td><code>B, 128</code></td>
+      <td>Compact spatial embedding per day</td>
+    </tr>
+  </table>
+</section>
+
+<!-- =====================================================================
+     SLIDE 6 — LSTM + ATTENTION DETAIL
+     ===================================================================== -->
+<section>
+  <h2>LSTM + Temporal Attention</h2>
+  <div class="cols">
+    <div class="col2">
+      <div class="box box-blue">
+        <h3>LSTM — temporal memory</h3>
+        <pre><code class="python">LSTM(
+  input_size  = 128,   # CNN feature vector per day
+  hidden_size = 256,   # internal memory dimension
+  num_layers  = 2,     # stacked LSTMs
+  dropout     = 0.3,   # between layers only
+  batch_first = True
+)
+# input:  (batch, 60, 128)
+# output: (batch, 60, 256)  ← ALL timesteps</code></pre>
+        <p>The 2nd LSTM layer can learn higher-order temporal patterns
+        — e.g. "a warming trend accelerating over 2 weeks".</p>
+        <p>Dropout applied <em>between</em> the two layers, not after the last one.</p>
+      </div>
+
+      <div class="box box-green">
+        <h3>Temporal Attention — Bahdanau style</h3>
+        <pre><code class="python">scores  = Linear(256 → 1)(lstm_out)   # (B, 60)
+weights = softmax(scores)              # (B, 60)  — sum to 1
+context = sum(lstm_out × weights)      # (B, 256) — weighted mean</code></pre>
+        <p>The model <strong>learns which days in the past matter most</strong>
+        for the prediction. This is directly interpretable:
+        high weight at day −20 means "conditions 3 weeks ago are predictive".</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="box">
+        <h3>Temporal features</h3>
+        <p>Appended before the final FC:</p>
+        <ul>
+          <li><code>year_norm</code> — normalised year (0→1)</li>
+          <li><code>month_sin</code> — sin(2π·m/12)</li>
+          <li><code>month_cos</code> — cos(2π·m/12)</li>
+        </ul>
+        <p>Cyclic encoding: Jan and Dec are <em>close</em> in feature space.</p>
+        <p>Without this, the model cannot distinguish summer vs winter anomalies.</p>
+      </div>
+      <div class="box">
+        <h3>Final FC head</h3>
+        <pre><code class="python">Linear(259 → 64)
+ReLU
+Dropout(0.3)
+Linear(64 → 1)   # SST anomaly</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 7 — DATASET & SPLITS
+     ===================================================================== -->
+<section>
+  <h2>Dataset & Data Splits</h2>
+  <div class="cols">
+    <div class="col2">
+      <div class="box box-blue">
+        <h3>Sliding window construction</h3>
+        <p>Each sample: <code>window_size=60</code> consecutive daily maps → predict target at <code>t + lead_time</code></p>
+        <p>Total samples ≈ N_days − window − lead + 1</p>
+        <p>Target normalised using <strong>training stats only</strong> — no data leakage.</p>
+      </div>
+
+      <div class="box box-green">
+        <h3>Block-year split (default)</h3>
+        <p>Full years are assigned randomly to train / val / test.
+        No sample-level overlap within a year.</p>
+        <ul>
+          <li><strong>Avoids temporal leakage</strong> between splits</li>
+          <li><strong>All seasons represented</strong> in all splits (unlike temporal split)</li>
+          <li><strong>Random but reproducible</strong> — seeded RNG</li>
+        </ul>
+        <p class="dim-text">Also available: temporal split (past→train, future→test) and random split.</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="box">
+        <h3>Normalisation</h3>
+        <p>Stats computed on training data only, after split:</p>
+        <ol>
+          <li>Day-of-year climatology (1985–2014, 5-day window) subtracted from ERA5 variables</li>
+          <li>Per-variable mean and std computed on training time span</li>
+          <li>Land-masked ocean vars → NaN excluded from stats</li>
+        </ol>
+        <p>Applied identically to val/test at inference time.</p>
+      </div>
+      <div class="box">
+        <h3>Ratios</h3>
+        <p>70 / 15 / 15 (train / val / test) at year level</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 8 — TRAINING
+     ===================================================================== -->
+<section>
+  <h2>Training Setup</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="box box-blue">
+        <h3>Framework</h3>
+        <p><strong>PyTorch Lightning</strong> — automatic multi-GPU, checkpointing, logging</p>
+        <p><strong>WandB</strong> — experiment tracking (project: <code>mhw-precursors</code>)</p>
+        <p><code>torch.set_float32_matmul_precision("medium")</code> — faster on A100/H100</p>
+      </div>
+      <div class="box">
+        <h3>Loss & Optimiser</h3>
+        <ul>
+          <li>Loss: <strong>MSE</strong> (regression on normalised target)</li>
+          <li>Optimiser: <strong>Adam</strong>, lr=1e-3, weight_decay=1e-4</li>
+          <li>Scheduler: <strong>ReduceLROnPlateau</strong> (factor=0.5, patience=5)</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col">
+      <div class="box box-green">
+        <h3>Callbacks</h3>
+        <ul>
+          <li><strong>ModelCheckpoint</strong> — top-3 by val_loss</li>
+          <li><strong>EarlyStopping</strong> — patience=30 epochs</li>
+          <li><strong>LearningRateMonitor</strong> — per epoch</li>
+          <li><strong>LossCurvePlotCallback</strong> — saves train/val loss PNG</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>Evaluation metrics</h3>
+        <ul>
+          <li><strong>MAE</strong> — in normalised units and °C</li>
+          <li><strong>Pearson r</strong> — correlation predicted vs true</li>
+          <li>Scatter plot: predictions vs ground truth saved automatically</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 9 — XAI OVERVIEW
+     ===================================================================== -->
+<section>
+  <h2>Explainability (XAI)</h2>
+  <p style="color:#aaa; font-size:0.75em;">Three complementary methods to understand <em>what</em> the model learned</p>
+
+  <div class="cols" style="margin-top: 0.8em;">
+    <div class="col box box-red">
+      <h3>Integrated Gradients</h3>
+      <p><em>Which variables and spatial regions matter most?</em></p>
+      <p>Interpolates from a zero baseline to the actual input in 50 steps, averages gradients × input difference.</p>
+      <p><strong>Outputs:</strong></p>
+      <ul>
+        <li>Bar chart — mean |attribution| per variable</li>
+        <li>Spatial map — where in the domain the model looks</li>
+      </ul>
+      <p class="dim-text">Axiomatic: satisfies completeness and sensitivity.</p>
+    </div>
+    <div class="col box box-blue">
+      <h3>Attention-weighted Grad-CAM</h3>
+      <p><em>Which geographic area drives the prediction?</em></p>
+      <p>Hooks the last Conv2d layer. For each of the 60 frames: <code>cam_t = ReLU(mean_c(grad × act))</code>. Final map = Σ<sub>t</sub>(attn_t × cam_t).</p>
+      <p><strong>Outputs:</strong></p>
+      <ul>
+        <li>Spatial heatmap overlaid on input</li>
+        <li>Shown for high- and low-anomaly cases</li>
+      </ul>
+    </div>
+    <div class="col box box-green">
+      <h3>Temporal Attention Weights</h3>
+      <p><em>Which past days are most predictive?</em></p>
+      <p>Native to the architecture — no extra computation. Softmax weights over the 60-day window, extracted via <code>forward_with_attention()</code>.</p>
+      <p><strong>Output:</strong></p>
+      <ul>
+        <li>Weight curves per sample (−59 … 0 days)</li>
+        <li>Compared across high/low anomaly events</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 10 — GRAD-CAM DETAIL
+     ===================================================================== -->
+<section>
+  <h2>Attention-weighted Grad-CAM — Detail</h2>
+  <div class="cols">
+    <div class="col2">
+      <div class="box">
+        <h3>Why a custom Grad-CAM?</h3>
+        <p>Standard Grad-CAM is designed for pure CNNs. Here the CNN is embedded inside an LSTM+Attention pipeline:</p>
+        <ul>
+          <li>60 frames are processed by the same CNN</li>
+          <li>The LSTM and attention then decide which frames matter</li>
+          <li>A standard CAM would give one map per frame, ignoring temporal importance</li>
+        </ul>
+        <p>Solution: <strong>weight each per-frame CAM by the attention score</strong> of that frame.</p>
+      </div>
+      <div class="box box-blue">
+        <h3>Algorithm</h3>
+        <pre><code class="python">for t in range(window=60):
+    w_t   = grad[t].mean(channels)    # (C,1,1) → scalar per channel
+    cam_t = ReLU((w_t × act[t]).sum(channels))  # (H', W')
+    cam  += attn_weight[t] × cam_t
+
+cam = cam / cam.max()                  # normalise [0,1]
+cam = upsample(cam, size=(lat, lon))   # bilinear → original resolution</code></pre>
+      </div>
+    </div>
+    <div class="col">
+      <div class="box box-green">
+        <h3>Implementation detail</h3>
+        <p><code>cuDNN</code> is disabled during backward pass — cuDNN LSTM does not support gradients in eval mode.</p>
+        <p>Forward hooks registered on the last <code>Conv2d</code> — found automatically by iterating <code>cnn_encoder.cnn</code>.</p>
+      </div>
+      <div class="box">
+        <h3>What we analyse</h3>
+        <p>Separately for:</p>
+        <ul>
+          <li><strong>High anomaly</strong> predictions (top N)</li>
+          <li><strong>Low anomaly</strong> predictions (bottom N)</li>
+        </ul>
+        <p>Allows comparison: does the model focus on different regions in MHW vs normal conditions?</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 11 — CODE STRUCTURE
+     ===================================================================== -->
+<section>
+  <h2>Code Structure</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="box box-blue">
+        <h3>Core modules</h3>
+        <table>
+          <tr><th>File</th><th>Responsibility</th></tr>
+          <tr><td><code>dataset.py</code></td><td>LazyDataset — sliding windows, anomalisation, normalisation</td></tr>
+          <tr><td><code>datamodule.py</code></td><td>LazyDataModule — splits, dataloaders</td></tr>
+          <tr><td><code>model.py</code></td><td>CNNEncoder, TemporalAttention, CNNLSTMModel, LightningModule</td></tr>
+          <tr><td><code>train.py</code></td><td>Training script — callbacks, WandB, evaluation</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="col">
+      <div class="box box-green">
+        <h3>XAI modules</h3>
+        <table>
+          <tr><th>File</th><th>Method</th></tr>
+          <tr><td><code>xai/integrated_gradients.py</code></td><td>IG — variable & spatial importance</td></tr>
+          <tr><td><code>xai/grad_cam.py</code></td><td>Attention-weighted Grad-CAM</td></tr>
+          <tr><td><code>xai/shap_analysis.py</code></td><td>SHAP (in progress)</td></tr>
+          <tr><td><code>xai/run_xai.py</code></td><td>Entry point — runs all XAI methods</td></tr>
+          <tr><td><code>eval/skill_scores.py</code></td><td>Evaluation metrics</td></tr>
+        </table>
+      </div>
+      <div class="box">
+        <h3>Infrastructure</h3>
+        <p><span class="tag">PyTorch Lightning</span>
+           <span class="tag">WandB</span>
+           <span class="tag">xarray</span>
+           <span class="tag">JUWELS HPC</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 12 — KEY DESIGN DECISIONS
+     ===================================================================== -->
+<section>
+  <h2>Key Design Decisions</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="box box-blue">
+        <h3>Why CNN + LSTM?</h3>
+        <p>MHWs have both <strong>spatial structure</strong> (which regions warm first?) and <strong>temporal dynamics</strong> (how do conditions evolve over weeks?).</p>
+        <p>A pure CNN misses the temporal evolution. A pure LSTM ignores spatial structure. The combined architecture captures both.</p>
+      </div>
+      <div class="box box-red">
+        <h3>Why Attention?</h3>
+        <p>Not all 60 days in the window are equally predictive. A precursor signal 3 weeks ago may matter more than yesterday.</p>
+        <p>Attention makes this <strong>explicit and interpretable</strong> — a key requirement for scientific credibility.</p>
+      </div>
+    </div>
+    <div class="col">
+      <div class="box box-green">
+        <h3>Why block-year split?</h3>
+        <p><strong>Temporal split</strong> — model never sees future years. But train/val/test may have different seasonality.</p>
+        <p><strong>Random split</strong> — all seasons in all splits, but autocorrelation creates leakage (adjacent days in train and test).</p>
+        <p><strong>Block-year</strong> — best of both: no sample overlap within a year, all seasons represented, full year blocks prevent autocorrelation leakage.</p>
+      </div>
+      <div class="box">
+        <h3>Why three XAI methods?</h3>
+        <p>Each answers a different question and has different assumptions. Convergent evidence across methods is scientifically stronger than any single method.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 13 — FUTURE WORK
+     ===================================================================== -->
+<section>
+  <h2>Future Work & Extensions</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="box box-blue">
+        <h3>Data</h3>
+        <ul>
+          <li>Incorporate daily data for Levante region</li>
+          <li>Add sub-surface ocean variables (T at depth)</li>
+          <li>Extend temporal coverage beyond 2023</li>
+        </ul>
+      </div>
+      <div class="box box-red">
+        <h3>Model</h3>
+        <ul>
+          <li>Binary classification head (MHW yes/no)</li>
+          <li>Multi-step forecasting (predict N days ahead jointly)</li>
+          <li>Transformer encoder instead of LSTM</li>
+          <li>Ensemble of models for uncertainty quantification</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col">
+      <div class="box box-green">
+        <h3>XAI</h3>
+        <ul>
+          <li>Complete SHAP analysis — compare with IG</li>
+          <li>Composite analysis: average attribution maps over all MHW events</li>
+          <li>Causal attribution — does the model find known physical precursors?</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>Connections to FDL</h3>
+        <p>This project sits at the intersection of:</p>
+        <p><span class="tag">Earth observation</span>
+           <span class="tag">Climate extremes</span>
+           <span class="tag">XAI for science</span>
+           <span class="tag">Operational forecasting</span></p>
+        <p>Aligns with FDL challenges on ocean monitoring, extreme event prediction, and trustworthy AI for Earth sciences.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================================
+     SLIDE 14 — SUMMARY
+     ===================================================================== -->
+<section>
+  <h2>Summary</h2>
+  <div class="cols">
+    <div class="col2">
+      <div class="box box-blue" style="margin-bottom: 0.8em;">
+        <p><strong>Problem:</strong> Predict North Sea SST anomalies N days ahead to detect Marine Heatwave precursors.</p>
+      </div>
+      <div class="box box-red" style="margin-bottom: 0.8em;">
+        <p><strong>Architecture:</strong> CNN per spatial frame → LSTM for temporal dynamics → Temporal Attention → scalar SST anomaly prediction.</p>
+      </div>
+      <div class="box box-green" style="margin-bottom: 0.8em;">
+        <p><strong>Explainability:</strong> Three XAI methods (IG, Grad-CAM, Attention) answer <em>what, where, and when</em> the model relies on for its prediction.</p>
+      </div>
+      <div class="box" style="margin-bottom: 0.8em;">
+        <p><strong>Rigour:</strong> Block-year splits, climatology consistent with preprocessing, no data leakage, reproducible seeds.</p>
+      </div>
+    </div>
+    <div class="col center" style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap: 1em;">
+      <div style="font-size: 3em;">🌊</div>
+      <div class="box" style="text-align:left;">
+        <p><span class="tag">PyTorch Lightning</span></p>
+        <p><span class="tag">WandB</span></p>
+        <p><span class="tag">ICON-COAST + ERA5</span></p>
+        <p><span class="tag">JUWELS HPC</span></p>
+        <p><span class="tag-green tag">Integrated Gradients</span></p>
+        <p><span class="tag-green tag">Grad-CAM</span></p>
+        <p><span class="tag-green tag">Temporal Attention</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+</div>
+
+<!-- Reveal.js scripts -->
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: 'c/t',
+    transition: 'slide',
+    transitionSpeed: 'fast',
+    center: false,
+    margin: 0.03,
+    minScale: 0.2,
+    maxScale: 2.0,
+    width: 1280,
+    height: 720,
+    plugins: [ RevealHighlight, RevealNotes ],
+  });
+</script>
+</body>
+</html>

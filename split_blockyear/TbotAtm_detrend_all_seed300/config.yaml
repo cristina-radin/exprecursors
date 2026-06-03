@@ -1,0 +1,29 @@
+data_dir: "/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily_deepSST.nc"
+variables: ["ptho_bot", "u10", "v10", "msl", "ssr"]
+ocean_variables: ["ptho_bot", "msl"]
+detrend_variables: ["ptho_bot", "u10", "v10", "msl", "ssr"]
+detrend_target: true
+window_size: 60
+lead_time: 7
+in_channels: 5
+out_channels: 1
+cnn_features: 256
+lstm_hidden: 512
+lstm_layers: 4
+dropout: 0.3
+temporal_features: 3
+batch_size: 16
+learning_rate: 0.001
+max_epochs: 1000
+num_workers: 2
+seed: 300
+output_dir: "split_blockyear/TbotAtm_detrend_all_seed300"
+loss_fn: "MSELoss"
+normalize: true
+clim_ref_start: 1985
+clim_ref_end:   2014
+clim_window:    5
+split_mode: "block_year"
+train_ratio: 0.75
+val_ratio:   0.15
+test_ratio:  0.10

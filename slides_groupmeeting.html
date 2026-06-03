@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MHW Precursor Detection — Group Meeting</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/night.css" />
+
+  <style>
+    :root {
+      --accent:  #4fc3f7;
+      --accent2: #ef9a9a;
+      --accent3: #a5d6a7;
+      --accent4: #ffe082;
+      --dim:     #888;
+    }
+    .reveal { font-family: 'Segoe UI', Arial, sans-serif; }
+    .reveal h1 { font-size: 1.5em; color: var(--accent); margin-bottom: 0.15em; }
+    .reveal h2 { font-size: 1.05em; color: var(--accent); border-bottom: 1px solid #333; padding-bottom: 3px; margin-bottom: 0.35em; margin-top: 0.5em; }
+    .reveal p, .reveal li { font-size: 0.65em; line-height: 1.45; margin: 0.12em 0; }
+    .reveal ul { margin-left: 1em; }
+
+    .cols { display: flex; gap: 0.7em; align-items: flex-start; }
+    .col  { flex: 1; }
+
+    .box {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 0.3em 0.55em;
+      margin-bottom: 0.3em;
+    }
+    .box-blue  { border-left: 4px solid var(--accent);  background: rgba(79,195,247,0.07); }
+    .box-red   { border-left: 4px solid var(--accent2); background: rgba(239,154,154,0.07); }
+    .box-green { border-left: 4px solid var(--accent3); background: rgba(165,214,167,0.07); }
+    .box-yellow{ border-left: 4px solid var(--accent4); background: rgba(255,224,130,0.07); }
+
+    .flow { display: flex; align-items: center; gap: 0.25em; flex-wrap: wrap; font-size: 0.62em; margin: 0.3em 0; }
+    .flow-box {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid #555;
+      border-radius: 6px;
+      padding: 0.2em 0.45em;
+      text-align: center;
+      line-height: 1.3;
+    }
+    .flow-arrow { color: var(--accent); font-size: 1.1em; }
+
+    .num { font-size: 1.5em; font-weight: bold; color: var(--accent); }
+    .num-red { color: var(--accent2); }
+    .num-green { color: var(--accent3); }
+    .num-yellow { color: var(--accent4); }
+
+    .badge {
+      display: inline-block;
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-size: 0.6em;
+      font-weight: bold;
+      margin: 0 2px;
+    }
+    .badge-blue   { background: #1a3a5a; color: var(--accent); }
+    .badge-red    { background: #5a2020; color: var(--accent2); }
+    .badge-green  { background: #1a4a2a; color: var(--accent3); }
+    .badge-yellow { background: #4a3a00; color: var(--accent4); }
+
+    table { font-size: 0.6em; width: 100%; border-collapse: collapse; }
+    th { background: #1a3a4a; color: var(--accent); padding: 4px 8px; text-align: left; }
+    td { padding: 3px 8px; border-bottom: 1px solid #2a2a2a; }
+    tr.best td { color: var(--accent3); font-weight: bold; }
+
+    .subtitle { color: #aaa; font-size: 0.65em; margin-top: 0.2em; }
+    .hl  { color: var(--accent);  font-weight: bold; }
+    .hl2 { color: var(--accent2); font-weight: bold; }
+    .hl3 { color: var(--accent3); font-weight: bold; }
+    .hl4 { color: var(--accent4); font-weight: bold; }
+    .dim-text { color: var(--dim); font-size: 0.65em; }
+    .center { text-align: center; }
+
+    .warn {
+      background: rgba(239,154,154,0.1);
+      border: 1px solid var(--accent2);
+      border-radius: 6px;
+      padding: 0.3em 0.6em;
+      font-size: 0.65em;
+    }
+    .finding {
+      background: rgba(165,214,167,0.1);
+      border: 1px solid var(--accent3);
+      border-radius: 6px;
+      padding: 0.3em 0.6em;
+      font-size: 0.65em;
+    }
+  </style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- =====================================================================
+     SLIDE 1 — PROBLEM + ARCHITECTURE + RESULTS
+     ===================================================================== -->
+<section>
+  <h1>MHW Precursor Detection</h1>
+  <p class="subtitle">CNN-LSTM + Temporal Attention &nbsp;·&nbsp; North Sea &nbsp;·&nbsp; 1985–2024</p>
+
+  <div class="cols" style="margin-top: 0.5em;">
+
+    <!-- LEFT: Problem + Data -->
+    <div class="col">
+      <h2>Problem</h2>
+      <div class="box box-blue">
+        <p><span class="hl">Predict</span> North Sea Marine Heatwaves<br>
+        <span class="hl">7 days</span> in advance · daily resolution</p>
+      </div>
+      <div class="box">
+        <p><b>Target:</b> basin-mean SST anomaly<br>
+        <span style="font-size:0.9em; color:#aaa;">(exceedance above 90th pct, ref 1985–2014)</span></p>
+        <p><b>Window:</b> 60-day input → predict t+7</p>
+      </div>
+
+      <h2>Inputs</h2>
+      <div class="cols" style="gap:0.4em; margin-top:0.2em;">
+        <div class="box box-blue" style="flex:1;">
+          <p class="center" style="font-size:0.85em; color:var(--accent);">ICON-COAST</p>
+          <p>T<sub>bottom</sub> &nbsp;·&nbsp; SST anom</p>
+        </div>
+        <div class="box" style="flex:1;">
+          <p class="center" style="font-size:0.85em; color:#aaa;">ERA5</p>
+          <p>u10 · v10 · SLP · Solar rad.</p>
+        </div>
+      </div>
+
+      <h2>Architecture</h2>
+      <div class="flow">
+        <div class="flow-box" style="border-color:var(--accent);">
+          <div style="color:var(--accent); font-size:0.9em;">CNN</div>
+          <div>(n_vars, lat, lon)</div>
+          <div>→ 256-d vector</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box" style="border-color:var(--accent);">
+          <div style="color:var(--accent); font-size:0.9em;">LSTM ×4</div>
+          <div>60 frames</div>
+          <div>hidden=512</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box" style="border-color:var(--accent);">
+          <div style="color:var(--accent); font-size:0.9em;">Attention</div>
+          <div>which days</div>
+          <div>matter most?</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box" style="border-color:var(--accent2);">
+          <div style="color:var(--accent2); font-size:0.9em;">FC head</div>
+          <div>+ year, sin,</div>
+          <div>cos (month)</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box" style="border-color:var(--accent3);">
+          <div style="color:var(--accent3);">ŷ</div>
+          <div>SST anom</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Results -->
+    <div class="col">
+      <h2>Results &nbsp;<span class="dim-text">ensemble 14 seeds, block-year split</span></h2>
+
+      <div class="cols" style="gap:0.5em; margin-bottom:0.4em;">
+        <div class="box box-green center" style="flex:1; padding: 0.4em;">
+          <div class="num hl3">0.771</div>
+          <div style="font-size:0.62em; color:#aaa;">Pearson r (OOS test)</div>
+        </div>
+        <div class="box box-green center" style="flex:1; padding: 0.4em;">
+          <div class="num hl3">0.468</div>
+          <div style="font-size:0.62em; color:#aaa;">ETS (OOS test)</div>
+        </div>
+        <div class="box box-green center" style="flex:1; padding: 0.4em;">
+          <div class="num hl3">0.887</div>
+          <div style="font-size:0.62em; color:#aaa;">POD</div>
+        </div>
+      </div>
+
+      <table>
+        <tr><th>Model</th><th>r (OOS)</th><th>ETS</th><th>AUC</th></tr>
+        <tr class="best"><td>TbotAtm <span class="badge badge-blue">T<sub>bot</sub>+Atm</span></td><td>0.784</td><td>0.483</td><td>0.955</td></tr>
+        <tr><td>SSTAtm <span class="badge badge-green">SST+Atm</span></td><td>—</td><td>—</td><td>0.927</td></tr>
+        <tr><td>Atm <span class="badge">Atm only</span></td><td>—</td><td>—</td><td>0.716</td></tr>
+      </table>
+      <p class="dim-text" style="margin-top:0.2em;">T<sub>bottom</sub> adds <span class="hl3">+0.215 ETS</span> over atmosphere-only</p>
+
+      <h2 style="margin-top:0.5em;">Predictability horizon</h2>
+      <div class="cols" style="gap:0.3em;">
+        <div class="box" style="flex:1; text-align:center;">
+          <span class="hl" style="font-size:1.1em;">3d</span>
+          <p>val loss 0.393</p>
+        </div>
+        <div class="box box-green" style="flex:1; text-align:center;">
+          <span class="hl3" style="font-size:1.1em;">7–14d</span>
+          <p>≈ plateau</p>
+        </div>
+        <div class="box" style="flex:1; text-align:center;">
+          <span class="hl2" style="font-size:1.1em;">28d</span>
+          <p>val loss 0.685</p>
+        </div>
+      </div>
+      <p class="dim-text">Plateau at 7–14d driven by T<sub>bottom</sub> ocean memory</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- =====================================================================
+     SLIDE 2 — EXPLAINABILITY + NEW FINDINGS + NEXT STEPS
+     ===================================================================== -->
+<section>
+  <h1>Explainability &amp; Open Questions</h1>
+  <p class="subtitle">Integrated Gradients · Ensemble 4 seeds · top-5 MHW events/year</p>
+
+  <div class="cols" style="margin-top: 0.4em;">
+
+    <!-- LEFT: XAI findings -->
+    <div class="col">
+      <h2>What we thought the model used</h2>
+      <div class="box box-blue">
+        <p>IG on <b>spatial inputs only</b> (standard approach)</p>
+        <ul>
+          <li>T<sub>bottom</sub> dominates: <span class="hl">~40% of |IG|</span>, all years</li>
+          <li>Regime shift: <span class="hl">+2.6%/decade</span> (r=0.68, p&lt;0.001)</li>
+          <li>Spatial hotspot: Gulf Stream region</li>
+          <li>Seasonal: T<sub>bot</sub> peaks JJA, winds peak DJF</li>
+        </ul>
+      </div>
+
+      <h2 style="color:var(--accent2);">What the model actually uses</h2>
+      <div class="warn">
+        <p>Full IG including <b>temporal features</b> (year, month sin/cos):</p>
+        <div class="cols" style="margin-top:0.3em; gap:0.4em;">
+          <div style="text-align:center; flex:1;">
+            <div style="font-size:1.6em; font-weight:bold; color:var(--accent2);">~50%</div>
+            <div style="font-size:0.85em; color:#aaa;">year_norm</div>
+          </div>
+          <div style="text-align:center; flex:1;">
+            <div style="font-size:1.6em; font-weight:bold; color:var(--accent4);">~42%</div>
+            <div style="font-size:0.85em; color:#aaa;">month (cos)</div>
+          </div>
+          <div style="text-align:center; flex:1;">
+            <div style="font-size:1.6em; font-weight:bold; color:var(--dim);">&lt;1%</div>
+            <div style="font-size:0.85em; color:#aaa;">all spatial vars</div>
+          </div>
+        </div>
+        <p style="margin-top:0.3em;"><b>Spatial IG was computed with temporal context held fixed</b> — the 40% T<sub>bottom</sub> was the marginal spatial contribution, not total.</p>
+      </div>
+    </div>
+
+    <!-- RIGHT: Interpretation + Next steps -->
+    <div class="col">
+      <h2>Two-level interpretation</h2>
+
+      <div class="box box-blue" style="margin-bottom:0.35em;">
+        <p><span class="badge badge-blue">Level 1 · Climatological</span></p>
+        <p>Model learned MHW long-term climatology:<br>
+        more frequent &amp; intense in recent years (trend) and in summer (season).<br>
+        <span class="hl">Valid signal — not a bug.</span></p>
+      </div>
+
+      <div class="box box-green">
+        <p><span class="badge badge-green">Level 2 · Physical</span></p>
+        <p>Conditional on temporal context, T<sub>bottom</sub> is the dominant spatial precursor.<br>
+        <span class="hl3">This is the novel finding.</span> Ocean preconditioning increasingly important in a warming climate.</p>
+      </div>
+
+      <h2 style="margin-top:0.5em;">Next steps <span class="badge badge-yellow">running now</span></h2>
+      <div class="box box-yellow">
+        <ul>
+          <li><b>Ablation — no temporal features:</b> retrain 4 seeds without year/month in FC head → does skill hold?</li>
+          <li><b>Spatial IG with zeroed temporal context:</b> what spatial patterns emerge when year=0, month=0?</li>
+          <li><b>Baseline comparison:</b> does a linear model (year + season only) match NN skill?</li>
+          <li class="dim-text">Future: detrend inputs + adaptive threshold → isolate physical mechanism from trend</li>
+        </ul>
+      </div>
+
+      <div class="finding" style="margin-top:0.4em;">
+        <p><b>Key question:</b> Is the model skill real (physical precursors) or is it doing expensive climatology?<br>
+        Answer in ~12h when ablation jobs finish.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: true,
+    transition: 'fade',
+    transitionSpeed: 'fast',
+    controls: true,
+    progress: true,
+  });
+</script>
+</body>
+</html>
