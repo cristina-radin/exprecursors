@@ -178,7 +178,7 @@ def patched_config_path(cfg_path: Path) -> str:
 
 
 def load_model(ckpt_path, cfg, device):
-    from model import CNNLightningModule, CNNLSTMModel
+    from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
     inner = CNNLSTMModel(
         in_channels      = cfg["in_channels"],
         cnn_features     = cfg.get("cnn_features",  256),
@@ -222,7 +222,7 @@ def compute_ig_peryear(device):
     Run |IG| for ptho_bot (var index 0) on all 25 TbotAtm runs.
     Returns: ig_per_year dict {year: list of per-seed mean |IG|(ptho_bot) values}
     """
-    from datamodule import LazyDataModule
+    from src.data.datamodule import LazyDataModule
 
     ig_per_year = {}   # year (int) → list of float
     n_runs = 0

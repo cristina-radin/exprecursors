@@ -25,8 +25,8 @@ from scipy.stats import pearsonr
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 
 MULTISEED_DIR = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/multiseed")
 SEEDS   = [42, 123, 456, 789, 1337]

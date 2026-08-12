@@ -23,9 +23,9 @@ from scipy.ndimage import uniform_filter1d
 from scipy.stats import pearsonr
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
-from partition.train_partition import RemoteOnlyLightningModule, LocalOnlyLightningModule
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
+from scripts.train_partition import RemoteOnlyLightningModule, LocalOnlyLightningModule
 
 # ── Constants ────────────────────────────────────────────────────────────────
 

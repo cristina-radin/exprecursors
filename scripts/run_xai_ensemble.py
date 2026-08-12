@@ -32,11 +32,11 @@ from scipy.ndimage import binary_dilation
 import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
-from xai.utils import load_config
-from xai.integrated_gradients import _integrated_gradients
-from xai.run_xai import (
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
+from src.xai.utils import load_config
+from src.xai.integrated_gradients import _integrated_gradients
+from scripts.run_xai import (
     collect_predictions, top_indices_for_period,
     plot_ig_comparison, plot_ig_temporal, SEASONS,
 )

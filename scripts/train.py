@@ -16,8 +16,8 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import WandbLogger
 
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 
 
 class LossCurvePlotCallback(Callback):

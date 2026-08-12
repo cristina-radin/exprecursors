@@ -22,8 +22,8 @@ import torch
 import torch.backends.cudnn
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 
 MASKED_DIR = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/masked")
 ALL_SEEDS  = [42, 123, 456, 789, 1337]

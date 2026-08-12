@@ -27,8 +27,8 @@ from pytorch_lightning.callbacks import (
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 
 
 # ── NS-only masking Lightning wrapper ─────────────────────────────────────────

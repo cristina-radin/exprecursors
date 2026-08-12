@@ -14,7 +14,7 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Subset
 import yaml
 
-from dataset import LazyDataset
+from .dataset import LazyDataset
 
 
 class LazyDataModule(pl.LightningDataModule):

@@ -25,9 +25,9 @@ import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
-from xai.utils import load_config
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
+from src.xai.utils import load_config
 
 
 # ---------------------------------------------------------------------------
@@ -306,8 +306,8 @@ def main():
     preds, trues, years, months = collect_predictions(lm, full_ds, device)
 
     # --- Per-period XAI ---
-    from xai.grad_cam import AttentionGradCAM, _plot_cam, _plot_attention
-    from xai.integrated_gradients import (
+    from src.xai.grad_cam import AttentionGradCAM, _plot_cam, _plot_attention
+    from src.xai.integrated_gradients import (
         _integrated_gradients, analyze_integrated_gradients
     )
 

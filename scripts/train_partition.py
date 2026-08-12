@@ -28,14 +28,9 @@ from pytorch_lightning.callbacks import (
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
-
-
-# ── NS slices ────────────────────────────────────────────────────────────────
-
-_NS_LAT = slice(100, 127)
-_NS_LON = slice(150, 187)
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
+from src.data.masking import mask_remote, mask_local, _NS_LAT, _NS_LON
 
 
 # ── Remote-only: zero everything INSIDE NS box ───────────────────────────────
@@ -44,9 +39,7 @@ class RemoteOnlyLightningModule(CNNLightningModule):
     """Zeros all spatial channels inside the NS box in every forward pass."""
 
     def _mask(self, xs: torch.Tensor) -> torch.Tensor:
-        masked = xs.clone()
-        masked[:, :, :, _NS_LAT, _NS_LON] = 0.0
-        return masked
+        return mask_remote(xs)
 
     def training_step(self, batch, batch_idx):
         xs, xt, y = batch
@@ -67,9 +60,7 @@ class LocalOnlyLightningModule(CNNLightningModule):
     """Zeros all spatial channels outside the NS box in every forward pass."""
 
     def _mask(self, xs: torch.Tensor) -> torch.Tensor:
-        masked = torch.zeros_like(xs)
-        masked[:, :, :, _NS_LAT, _NS_LON] = xs[:, :, :, _NS_LAT, _NS_LON]
-        return masked
+        return mask_local(xs)
 
     def training_step(self, batch, batch_idx):
         xs, xt, y = batch

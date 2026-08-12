@@ -28,9 +28,9 @@ from glob import glob
 import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
-from datamodule import LazyDataModule
-from model import CNNLightningModule, CNNLSTMModel
-from xai.utils import load_config
+from src.data.datamodule import LazyDataModule
+from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
+from src.xai.utils import load_config
 
 
 # ---------------------------------------------------------------------------

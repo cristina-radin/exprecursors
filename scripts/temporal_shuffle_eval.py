@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader, Subset
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from dataset    import MHWDataset
-from datamodule import MHWDataModule
+from src.data.datamodule import MHWDataModule
 from model      import CNNLightningModule, build_model
 
 
