@@ -9,12 +9,12 @@ NS box: lat[100:127], lon[150:187]
 """
 
 import sys
-import torch
-import pytest
 from pathlib import Path
 
+import torch
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from scripts.train_partition import RemoteOnlyLightningModule, LocalOnlyLightningModule
+from scripts.train_partition import LocalOnlyLightningModule, RemoteOnlyLightningModule
 from src.data.masking import _NS_LAT, _NS_LON
 
 BATCH, C, W, LAT, LON = 1, 3, 60, 141, 201
@@ -36,6 +36,7 @@ def _local():
 
 # ── remote_only ───────────────────────────────────────────────────────────────
 
+
 def test_remote_zeros_ns_box():
     out = _remote()._mask(_ones())
     assert out[:, :, :, _NS_LAT, _NS_LON].abs().max().item() == 0.0
@@ -44,7 +45,7 @@ def test_remote_zeros_ns_box():
 def test_remote_preserves_outside_ns():
     out = _remote()._mask(_ones())
     outside = out.clone()
-    outside[:, :, :, _NS_LAT, _NS_LON] = 1.0   # ignore NS box
+    outside[:, :, :, _NS_LAT, _NS_LON] = 1.0  # ignore NS box
     assert outside.min().item() == 1.0
 
 
@@ -56,10 +57,11 @@ def test_remote_does_not_modify_input():
 
 # ── local_only ────────────────────────────────────────────────────────────────
 
+
 def test_local_zeros_outside_ns():
     out = _local()._mask(_ones())
     outside = out.clone()
-    outside[:, :, :, _NS_LAT, _NS_LON] = 0.0   # ignore NS box
+    outside[:, :, :, _NS_LAT, _NS_LON] = 0.0  # ignore NS box
     assert outside.abs().max().item() == 0.0
 
 
@@ -70,11 +72,12 @@ def test_local_preserves_ns_box():
 
 # ── consistency ───────────────────────────────────────────────────────────────
 
+
 def test_remote_and_local_are_complementary():
     """remote + local masks should sum to all-ones (no pixel lost, no pixel doubled)."""
     xs = _ones()
     r = _remote()._mask(xs)
-    l = _local()._mask(xs)
-    total = r + l
+    local_out = _local()._mask(xs)
+    total = r + local_out
     assert total.min().item() == 1.0
     assert total.max().item() == 1.0

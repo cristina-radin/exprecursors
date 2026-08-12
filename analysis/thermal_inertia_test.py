@@ -29,60 +29,76 @@ Usage:
   python eval/thermal_inertia_test.py --skip_ig  # if ig_tbot_peryear.npz exists
 """
 
-import argparse, os, re, sys, tempfile, yaml
-import numpy as np
+import argparse
+import os
+import re
+import sys
+import tempfile
+
 import matplotlib
+import numpy as np
+import yaml
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import torch
 import torch.backends.cudnn
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.utils.paths import (
+    DATA_FILE as DATA_FILE_ENV,
+)
+from src.utils.paths import (
+    EXPERIMENTS_DIR,
+)
 
 # ── constants ────────────────────────────────────────────────────────────────
 
-DAILY_NC    = "/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc"
-MULTISEED   = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/multiseed")
-SEEDS       = [42, 123, 456, 789, 1337]
-N_FOLDS     = 5
-N_IG_STEPS  = 20         # fewer steps OK for correlation test
+DAILY_NC = str(DATA_FILE_ENV)
+MULTISEED = Path(str(EXPERIMENTS_DIR))
+SEEDS = [42, 123, 456, 789, 1337]
+N_FOLDS = 5
+N_IG_STEPS = 20  # fewer steps OK for correlation test
 
 # NS ocean box (lat 50°N–63°N, lon -5°E–13°E in array indices)
 NS_LAT = slice(100, 127)
 NS_LON = slice(150, 187)
 
-WINDOW_YR  = 10          # rolling window length in years
-STEP_YR    = 1           # step
-MAX_ACF_LAG = 180        # days; enough to capture e-folding for NS SST (~60-90d)
-INV_E      = 1.0 / np.e  # ≈ 0.368
+WINDOW_YR = 10  # rolling window length in years
+STEP_YR = 1  # step
+MAX_ACF_LAG = 180  # days; enough to capture e-folding for NS SST (~60-90d)
+INV_E = 1.0 / np.e  # ≈ 0.368
 
-BLOCK_LEN  = 10          # bootstrap block length (windows)
-N_BOOT     = 5000
+BLOCK_LEN = 10  # bootstrap block length (windows)
+N_BOOT = 5000
 
 
 # ── step 1: decorrelation timescale ──────────────────────────────────────────
 
+
 def compute_ns_daily_series():
     """Return daily NS-mean to_anom as 1D array, and the corresponding year/date arrays."""
     import xarray as xr
+
     ds = xr.open_dataset(DAILY_NC)
     # land_mask=1 means ocean in merged_daily.nc (inverted convention)
     ocean = ds["land_mask"].values.astype(bool)  # True = ocean
-    ocean_ns = ocean[NS_LAT, NS_LON]             # (27, 37)
+    ocean_ns = ocean[NS_LAT, NS_LON]  # (27, 37)
 
-    to = ds["to_anom"].values[:, NS_LAT, NS_LON] # (T, 27, 37)
+    to = ds["to_anom"].values[:, NS_LAT, NS_LON]  # (T, 27, 37)
     ds_time = ds["time"].values
     ds.close()
 
     # Spatial mean over NS ocean pixels only
     ocean_ns_flat = ocean_ns.flatten()
     to_flat = to.reshape(len(to), -1)[:, ocean_ns_flat]  # (T, n_ocean)
-    ns_series = to_flat.mean(axis=1)                      # (T,)
+    ns_series = to_flat.mean(axis=1)  # (T,)
 
     # Parse years
     import pandas as pd
+
     times = pd.DatetimeIndex(ds_time)
     years = times.year.values
     return ns_series, years
@@ -100,10 +116,7 @@ def acf_efold_timescale(series, max_lag=MAX_ACF_LAG):
     if var == 0:
         return max_lag
 
-    r = np.array([
-        np.mean(s[:n-k] * s[k:]) / var
-        for k in range(max_lag + 1)
-    ])
+    r = np.array([np.mean(s[: n - k] * s[k:]) / var for k in range(max_lag + 1)])
 
     # First lag where ACF drops below 1/e
     crossings = np.where(r < INV_E)[0]
@@ -118,16 +131,16 @@ def compute_tau_rolling(ns_series, years, window_yr=WINDOW_YR, step_yr=STEP_YR):
     Returns: window_start_years (array), tau_days (array)
     """
     first_yr = int(years[0])
-    last_yr  = int(years[-1])
+    last_yr = int(years[-1])
     window_starts = range(first_yr, last_yr - window_yr + 2, step_yr)
 
-    tau_list   = []
+    tau_list = []
     start_list = []
 
     for t_start in window_starts:
         t_end = t_start + window_yr  # exclusive
-        mask  = (years >= t_start) & (years < t_end)
-        seg   = ns_series[mask]
+        mask = (years >= t_start) & (years < t_end)
+        seg = ns_series[mask]
         if len(seg) < 365:
             continue
         tau_list.append(acf_efold_timescale(seg))
@@ -139,13 +152,16 @@ def compute_tau_rolling(ns_series, years, window_yr=WINDOW_YR, step_yr=STEP_YR):
 
 # ── step 2: IG(ptho_bot) from TbotAtm multiseed ─────────────────────────────
 
+
 def best_ckpt(run_dir: Path) -> Path:
     ckpts = list((run_dir / "checkpoints").glob("*.ckpt"))
     if not ckpts:
         raise FileNotFoundError(f"No checkpoints in {run_dir}/checkpoints/")
+
     def val_loss(p):
         m = re.search(r"val_loss=(-?[\d.]+)", str(p))
         return float(m.group(1)) if m else 0.0
+
     return min(ckpts, key=val_loss)
 
 
@@ -179,18 +195,22 @@ def patched_config_path(cfg_path: Path) -> str:
 
 def load_model(ckpt_path, cfg, device):
     from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
+
     inner = CNNLSTMModel(
-        in_channels      = cfg["in_channels"],
-        cnn_features     = cfg.get("cnn_features",  256),
-        lstm_hidden      = cfg.get("lstm_hidden",    512),
-        lstm_layers      = cfg.get("lstm_layers",      4),
-        temporal_features= cfg.get("temporal_features", 0),
-        dropout          = cfg.get("dropout",         0.3),
-        arch             = cfg.get("arch",      "lstm_only"),
-        gaussian_nll     = cfg.get("gaussian_nll",  False),
+        in_channels=cfg["in_channels"],
+        cnn_features=cfg.get("cnn_features", 256),
+        lstm_hidden=cfg.get("lstm_hidden", 512),
+        lstm_layers=cfg.get("lstm_layers", 4),
+        temporal_features=cfg.get("temporal_features", 0),
+        dropout=cfg.get("dropout", 0.3),
+        arch=cfg.get("arch", "lstm_only"),
+        gaussian_nll=cfg.get("gaussian_nll", False),
     )
     lm = CNNLightningModule.load_from_checkpoint(
-        str(ckpt_path), model=inner, strict=False, map_location=device,
+        str(ckpt_path),
+        model=inner,
+        strict=False,
+        map_location=device,
     )
     return lm.eval().to(device)
 
@@ -202,17 +222,17 @@ def compute_ig_signed(lm, xs: torch.Tensor, xt: torch.Tensor) -> torch.Tensor:
     Returns: (T, C, H, W) CPU — SIGNED, mean over T returned by caller
     """
     baseline = torch.zeros_like(xs)
-    grads    = []
+    grads = []
     prev_cudnn = torch.backends.cudnn.enabled
     torch.backends.cudnn.enabled = False
     for step in range(N_IG_STEPS):
-        alpha  = step / max(N_IG_STEPS - 1, 1)
+        alpha = step / max(N_IG_STEPS - 1, 1)
         interp = (baseline + alpha * (xs - baseline)).requires_grad_(True)
         pred, _ = lm.model.forward_with_attention(interp.float(), xt.float())
         pred[:, 0].sum().backward()
         grads.append(interp.grad.detach().squeeze(0).clone())
     torch.backends.cudnn.enabled = prev_cudnn
-    avg_grads    = torch.stack(grads).mean(0)
+    avg_grads = torch.stack(grads).mean(0)
     attributions = (xs.squeeze(0) - baseline.squeeze(0)) * avg_grads
     return attributions.cpu()
 
@@ -224,29 +244,32 @@ def compute_ig_peryear(device):
     """
     from src.data.datamodule import LazyDataModule
 
-    ig_per_year = {}   # year (int) → list of float
+    ig_per_year = {}  # year (int) → list of float
     n_runs = 0
 
     for seed in SEEDS:
         for fold in range(N_FOLDS):
             run_name = f"TbotAtm_lstmonly_seed{seed}_fold{fold}"
-            run_dir  = MULTISEED / run_name
+            run_dir = MULTISEED / run_name
 
             cfg_path = run_dir / "config.yaml"
             if not cfg_path.exists():
-                print(f"  SKIP {run_name}: no config"); continue
+                print(f"  SKIP {run_name}: no config")
+                continue
             with open(cfg_path) as f:
                 cfg = yaml.safe_load(f)
 
             try:
                 ckpt = best_ckpt(run_dir)
             except FileNotFoundError:
-                print(f"  SKIP {run_name}: no checkpoint"); continue
+                print(f"  SKIP {run_name}: no checkpoint")
+                continue
 
             try:
                 patched = patched_config_path(cfg_path)
             except FileNotFoundError as e:
-                print(f"  SKIP {run_name}: {e}"); continue
+                print(f"  SKIP {run_name}: {e}")
+                continue
 
             print(f"\n[{n_runs+1}/25] {run_name}")
             lm = load_model(ckpt, cfg, device)
@@ -255,13 +278,15 @@ def compute_ig_peryear(device):
             dm.setup()
             test_ds = dm.test_dataloader().dataset
             base_ds = test_ds.dataset if hasattr(test_ds, "dataset") else test_ds
-            indices  = test_ds.indices  if hasattr(test_ds, "indices")  else range(len(test_ds))
+            indices = (
+                test_ds.indices if hasattr(test_ds, "indices") else range(len(test_ds))
+            )
 
             run_peryear = {}  # year → list of |IG|(ptho_bot) scalar
 
             for local_i, global_i in enumerate(indices):
                 xs, xt, _ = base_ds[global_i]
-                target_t  = global_i + base_ds.window_size - 1 + base_ds.lead_time
+                target_t = global_i + base_ds.window_size - 1 + base_ds.lead_time
                 yr = int(base_ds.years[target_t])
 
                 xs_dev = xs.unsqueeze(0).to(device)
@@ -293,6 +318,7 @@ def compute_ig_peryear(device):
 
 # ── step 3: align to windows + block bootstrap ───────────────────────────────
 
+
 def window_mean_ig(ig_per_year: dict, window_starts, window_yr=WINDOW_YR):
     """Mean |IG|(ptho_bot) for each rolling window."""
     means = []
@@ -312,33 +338,43 @@ def block_bootstrap_corr(x, y, block_len=BLOCK_LEN, n_boot=N_BOOT, rng_seed=0):
     Returns (r_obs, ci_low, ci_high, p_two_tail)
     """
     valid = ~(np.isnan(x) | np.isnan(y))
-    x, y  = x[valid], y[valid]
-    n     = len(x)
+    x, y = x[valid], y[valid]
+    n = len(x)
     r_obs = float(np.corrcoef(x, y)[0, 1])
 
     rng = np.random.default_rng(rng_seed)
     r_boots = []
     for _ in range(n_boot):
         n_blocks = int(np.ceil(n / block_len))
-        starts   = rng.integers(0, n, size=n_blocks)
-        idx      = np.concatenate([
-            (np.arange(s, s + block_len) % n) for s in starts
-        ])[:n]
+        starts = rng.integers(0, n, size=n_blocks)
+        idx = np.concatenate([(np.arange(s, s + block_len) % n) for s in starts])[:n]
         r_boot = float(np.corrcoef(x[idx], y[idx])[0, 1])
         r_boots.append(r_boot)
 
-    r_boots  = np.array(r_boots)
-    ci_low   = float(np.percentile(r_boots, 2.5))
-    ci_high  = float(np.percentile(r_boots, 97.5))
+    r_boots = np.array(r_boots)
+    ci_low = float(np.percentile(r_boots, 2.5))
+    ci_high = float(np.percentile(r_boots, 97.5))
     # Two-tailed p-value: fraction of boots more extreme than observed
-    p_val    = float(np.mean(np.abs(r_boots) >= np.abs(r_obs)))
+    p_val = float(np.mean(np.abs(r_boots) >= np.abs(r_obs)))
     return r_obs, ci_low, ci_high, p_val, r_boots
 
 
 # ── plotting ──────────────────────────────────────────────────────────────────
 
-def make_plots(window_starts, tau_days, ig_means, r_obs, ci_low, ci_high, p_val,
-               r_boots, ns_series, years, out_dir):
+
+def make_plots(
+    window_starts,
+    tau_days,
+    ig_means,
+    r_obs,
+    ci_low,
+    ci_high,
+    p_val,
+    r_boots,
+    ns_series,
+    years,
+    out_dir,
+):
     center_yrs = window_starts + WINDOW_YR / 2  # center of each window
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -354,8 +390,14 @@ def make_plots(window_starts, tau_days, ig_means, r_obs, ci_low, ci_high, p_val,
     valid = ~np.isnan(tau_days)
     if valid.sum() > 2:
         p = np.polyfit(center_yrs[valid], tau_days[valid], 1)
-        ax1.plot(center_yrs, np.polyval(p, center_yrs), "--", color="steelblue",
-                 alpha=0.6, label=f"trend: {p[0]:.2f} d/yr")
+        ax1.plot(
+            center_yrs,
+            np.polyval(p, center_yrs),
+            "--",
+            color="steelblue",
+            alpha=0.6,
+            label=f"trend: {p[0]:.2f} d/yr",
+        )
         ax1.legend(fontsize=9)
 
     # Panel 2: IG(ptho_bot) trend
@@ -367,17 +409,30 @@ def make_plots(window_starts, tau_days, ig_means, r_obs, ci_low, ci_high, p_val,
     ax2.grid(True, alpha=0.3)
     if valid_ig.sum() > 2:
         p = np.polyfit(center_yrs[valid_ig], ig_means[valid_ig], 1)
-        ax2.plot(center_yrs, np.polyval(p, center_yrs), "--", color="tomato",
-                 alpha=0.6, label=f"trend: {p[0]:.4f}/yr")
+        ax2.plot(
+            center_yrs,
+            np.polyval(p, center_yrs),
+            "--",
+            color="tomato",
+            alpha=0.6,
+            label=f"trend: {p[0]:.4f}/yr",
+        )
         ax2.legend(fontsize=9)
 
     # Panel 3: scatter τ vs IG with bootstrap CI
     valid = ~(np.isnan(tau_days) | np.isnan(ig_means))
     ax3.scatter(tau_days[valid], ig_means[valid], color="purple", zorder=3)
-    for i, (t, ig, yr) in enumerate(zip(tau_days[valid], ig_means[valid],
-                                         center_yrs[valid])):
-        ax3.annotate(f"{int(yr)}", (t, ig), fontsize=7, alpha=0.6,
-                     textcoords="offset points", xytext=(3, 2))
+    for i, (t, ig, yr) in enumerate(
+        zip(tau_days[valid], ig_means[valid], center_yrs[valid])
+    ):
+        ax3.annotate(
+            f"{int(yr)}",
+            (t, ig),
+            fontsize=7,
+            alpha=0.6,
+            textcoords="offset points",
+            xytext=(3, 2),
+        )
     ax3.set_xlabel("τ (days)")
     ax3.set_ylabel("|IG|(T_bottom)")
     significance = "significant" if p_val < 0.05 else "NOT significant"
@@ -397,7 +452,7 @@ def make_plots(window_starts, tau_days, ig_means, r_obs, ci_low, ci_high, p_val,
     # Panel 4: bootstrap distribution
     ax4.hist(r_boots, bins=50, color="gray", alpha=0.7, density=True)
     ax4.axvline(r_obs, color="red", lw=2, label=f"r_obs = {r_obs:.3f}")
-    ax4.axvline(ci_low,  color="blue", lw=1.5, ls="--", label=f"95% CI")
+    ax4.axvline(ci_low, color="blue", lw=1.5, ls="--", label="95% CI")
     ax4.axvline(ci_high, color="blue", lw=1.5, ls="--")
     ax4.axvline(0, color="black", lw=0.8, ls=":")
     ax4.set_xlabel("Bootstrap Pearson r")
@@ -409,7 +464,7 @@ def make_plots(window_starts, tau_days, ig_means, r_obs, ci_low, ci_high, p_val,
     fig.suptitle(
         "Thermal inertia test — NS SST persistence vs T_bottom IG attribution\n"
         "Null hypothesis: τ and IG(T_bottom) are uncorrelated",
-        fontsize=11
+        fontsize=11,
     )
     plt.tight_layout()
     out_path = out_dir / "thermal_inertia.png"
@@ -423,17 +478,22 @@ def make_plots(window_starts, tau_days, ig_means, r_obs, ci_low, ci_high, p_val,
     example_idxs = [0, n_wins // 2, n_wins - 1]
     for ax_ex, wi in zip(axes2, example_idxs):
         t_start = window_starts[wi]
-        mask    = (years >= t_start) & (years < t_start + WINDOW_YR)
-        seg     = ns_series[mask]
-        s       = seg - seg.mean()
-        var     = np.var(s)
-        lags    = range(MAX_ACF_LAG + 1)
-        n       = len(s)
-        acf     = np.array([np.mean(s[:n-k]*s[k:]) / var for k in lags])
+        mask = (years >= t_start) & (years < t_start + WINDOW_YR)
+        seg = ns_series[mask]
+        s = seg - seg.mean()
+        var = np.var(s)
+        lags = range(MAX_ACF_LAG + 1)
+        n = len(s)
+        acf = np.array([np.mean(s[: n - k] * s[k:]) / var for k in lags])
         ax_ex.plot(lags, acf, color="steelblue", lw=1)
         ax_ex.axhline(INV_E, color="red", ls="--", lw=1, label=f"1/e ≈ {INV_E:.2f}")
-        ax_ex.axvline(tau_days[wi], color="orange", ls="--", lw=1.5,
-                      label=f"τ = {tau_days[wi]:.0f} d")
+        ax_ex.axvline(
+            tau_days[wi],
+            color="orange",
+            ls="--",
+            lw=1.5,
+            label=f"τ = {tau_days[wi]:.0f} d",
+        )
         ax_ex.axhline(0, color="gray", lw=0.6, ls=":")
         ax_ex.set_title(f"ACF — {t_start}–{t_start+WINDOW_YR-1}")
         ax_ex.set_xlabel("Lag (days)")
@@ -449,16 +509,20 @@ def make_plots(window_starts, tau_days, ig_means, r_obs, ci_low, ci_high, p_val,
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", default="experiments/figures/thermal_inertia")
-    parser.add_argument("--skip_ig",   action="store_true",
-                        help="Skip IG computation (load existing ig_tbot_peryear.npz)")
+    parser.add_argument(
+        "--skip_ig",
+        action="store_true",
+        help="Skip IG computation (load existing ig_tbot_peryear.npz)",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    device  = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
     # ── STEP 1: τ computation ─────────────────────────────────────────────────
@@ -467,17 +531,21 @@ def main():
         print(f"\nLoading cached τ from {tau_cache}")
         d = np.load(str(tau_cache))
         window_starts = d["window_starts"]
-        tau_days      = d["tau_days"]
-        ns_series     = d["ns_series"]
-        years         = d["years"]
+        tau_days = d["tau_days"]
+        ns_series = d["ns_series"]
+        years = d["years"]
     else:
         print("\n=== STEP 1: Computing NS decorrelation timescale ===")
         ns_series, years = compute_ns_daily_series()
         print(f"NS series: {len(ns_series)} days, {years[0]}–{years[-1]}")
         window_starts, tau_days = compute_tau_rolling(ns_series, years)
-        np.savez(str(tau_cache),
-                 window_starts=window_starts, tau_days=tau_days,
-                 ns_series=ns_series, years=years)
+        np.savez(
+            str(tau_cache),
+            window_starts=window_starts,
+            tau_days=tau_days,
+            ns_series=ns_series,
+            years=years,
+        )
         print(f"Saved {tau_cache}")
 
     # ── STEP 2: IG per year ───────────────────────────────────────────────────
@@ -489,21 +557,25 @@ def main():
             ig_per_year = d["ig_per_year"].item()
             n_runs = int(d["n_runs"])
         else:
-            print("\n--skip_ig set but no ig_tbot_peryear.npz found — cannot run step 3")
+            print(
+                "\n--skip_ig set but no ig_tbot_peryear.npz found — cannot run step 3"
+            )
             return
     else:
         print("\n=== STEP 2: Computing |IG|(ptho_bot) from TbotAtm multiseed ===")
         ig_per_year, n_runs = compute_ig_peryear(device)
-        np.savez(str(ig_cache),
-                 ig_per_year=np.array(ig_per_year, dtype=object),
-                 n_runs=np.array(n_runs))
+        np.savez(
+            str(ig_cache),
+            ig_per_year=np.array(ig_per_year, dtype=object),
+            n_runs=np.array(n_runs),
+        )
         print(f"Saved {ig_cache}")
 
     # ── STEP 3: Align + correlate ─────────────────────────────────────────────
     print("\n=== STEP 3: Correlation + block bootstrap ===")
 
     ig_means = window_mean_ig(ig_per_year, window_starts)
-    print(f"\nWindow summary (center yr | τ days | mean |IG|):")
+    print("\nWindow summary (center yr | τ days | mean |IG|):")
     for ws, tau, ig in zip(window_starts, tau_days, ig_means):
         center = ws + WINDOW_YR / 2
         print(f"  {center:.0f}   τ={tau:.1f}   IG={ig:.5f}")
@@ -512,13 +584,17 @@ def main():
         tau_days, ig_means, block_len=BLOCK_LEN, n_boot=N_BOOT
     )
 
-    print(f"\n=== RESULT ===")
+    print("\n=== RESULT ===")
     print(f"  Pearson r    = {r_obs:.4f}")
     print(f"  95% CI       = [{ci_low:.4f}, {ci_high:.4f}]")
-    print(f"  p (bootstrap, two-tail) = {p_val:.4f}  "
-          f"({'significant' if p_val<0.05 else 'NOT significant'} at α=0.05)")
-    print(f"  n_windows = {(~np.isnan(tau_days) & ~np.isnan(ig_means)).sum()}  "
-          f"block_len={BLOCK_LEN}  B={N_BOOT}")
+    print(
+        f"  p (bootstrap, two-tail) = {p_val:.4f}  "
+        f"({'significant' if p_val<0.05 else 'NOT significant'} at α=0.05)"
+    )
+    print(
+        f"  n_windows = {(~np.isnan(tau_days) & ~np.isnan(ig_means)).sum()}  "
+        f"block_len={BLOCK_LEN}  B={N_BOOT}"
+    )
     print()
     if p_val < 0.05 and r_obs > 0:
         print("INTERPRETATION: Positive significant correlation suggests the T_bottom")
@@ -526,14 +602,29 @@ def main():
         print("  This is consistent with the 'regime shift as artifact' hypothesis.")
     elif p_val < 0.05 and r_obs < 0:
         print("INTERPRETATION: Negative correlation — longer τ is associated with LESS")
-        print("  T_bottom attribution. Inconsistent with thermal inertia artifact hypothesis.")
+        print(
+            "  T_bottom attribution. Inconsistent with thermal inertia artifact hypothesis."
+        )
     else:
-        print("INTERPRETATION: No significant correlation. Thermal inertia does NOT explain")
+        print(
+            "INTERPRETATION: No significant correlation. Thermal inertia does NOT explain"
+        )
         print("  the T_bottom IG trend. The regime shift signal is likely genuine.")
 
     # ── STEP 4: Plots ─────────────────────────────────────────────────────────
-    make_plots(window_starts, tau_days, ig_means, r_obs, ci_low, ci_high, p_val,
-               r_boots, ns_series, years, out_dir)
+    make_plots(
+        window_starts,
+        tau_days,
+        ig_means,
+        r_obs,
+        ci_low,
+        ci_high,
+        p_val,
+        r_boots,
+        ns_series,
+        years,
+        out_dir,
+    )
     print(f"\nAll outputs in: {out_dir}")
 
 

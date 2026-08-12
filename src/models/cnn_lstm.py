@@ -8,17 +8,17 @@ Architecture:
   4. FC head:       [attended_features + temporal_features] → scalar prediction
 """
 
-from typing import Optional, Dict, Any
+from typing import Any, Dict
 
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import pytorch_lightning as pl
 from torchmetrics.regression import MeanAbsoluteError, PearsonCorrCoef
-
 
 # =============================================================================
 # CNN Encoder — one spatial frame → feature vector
 # =============================================================================
+
 
 class CNNEncoder(nn.Module):
     """
@@ -36,24 +36,20 @@ class CNNEncoder(nn.Module):
             nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.MaxPool2d(2),               # 141×201 → 70×100
-
+            nn.MaxPool2d(2),  # 141×201 → 70×100
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2),               # 70×100 → 35×50
-
+            nn.MaxPool2d(2),  # 70×100 → 35×50
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.MaxPool2d(2),               # 35×50 → 17×25
-
+            nn.MaxPool2d(2),  # 35×50 → 17×25
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d((1, 1)),  # → (batch, 256, 1, 1)
-
-            nn.Flatten(),                  # → (batch, 256)
+            nn.Flatten(),  # → (batch, 256)
         )
 
         self.fc = nn.Linear(256, out_features)
@@ -66,6 +62,7 @@ class CNNEncoder(nn.Module):
 # =============================================================================
 # Temporal Attention — which timesteps in the window matter most
 # =============================================================================
+
 
 class TemporalAttention(nn.Module):
     """
@@ -86,15 +83,16 @@ class TemporalAttention(nn.Module):
         Returns:
             context: (batch, hidden_size) — weighted sum over time
         """
-        scores  = self.attn(lstm_out).squeeze(-1)          # (batch, window_size)
+        scores = self.attn(lstm_out).squeeze(-1)  # (batch, window_size)
         weights = torch.softmax(scores, dim=-1).unsqueeze(-1)  # (batch, window_size, 1)
-        context = (lstm_out * weights).sum(dim=1)          # (batch, hidden_size)
+        context = (lstm_out * weights).sum(dim=1)  # (batch, hidden_size)
         return context
 
 
 # =============================================================================
 # Full model
 # =============================================================================
+
 
 class CNNLSTMModel(nn.Module):
     """
@@ -111,12 +109,12 @@ class CNNLSTMModel(nn.Module):
 
     def __init__(
         self,
-        in_channels:       int = 5,
-        cnn_features:      int = 128,
-        lstm_hidden:       int = 256,
-        lstm_layers:       int = 2,
+        in_channels: int = 5,
+        cnn_features: int = 128,
+        lstm_hidden: int = 256,
+        lstm_layers: int = 2,
         temporal_features: int = 3,
-        dropout:           float = 0.3,
+        dropout: float = 0.3,
     ):
         super().__init__()
 
@@ -143,7 +141,7 @@ class CNNLSTMModel(nn.Module):
 
     def forward(
         self,
-        x_spatial:  torch.Tensor,
+        x_spatial: torch.Tensor,
         x_temporal: torch.Tensor,
     ) -> torch.Tensor:
         """
@@ -157,25 +155,25 @@ class CNNLSTMModel(nn.Module):
 
         # Encode each frame with the CNN
         x_flat = x_spatial.view(batch * window, n_vars, lat, lon)
-        features = self.cnn_encoder(x_flat)              # (batch*window, cnn_features)
-        features = features.view(batch, window, -1)      # (batch, window, cnn_features)
+        features = self.cnn_encoder(x_flat)  # (batch*window, cnn_features)
+        features = features.view(batch, window, -1)  # (batch, window, cnn_features)
 
         # LSTM over the sequence
-        lstm_out, _ = self.lstm(features)                # (batch, window, lstm_hidden)
+        lstm_out, _ = self.lstm(features)  # (batch, window, lstm_hidden)
 
         # Temporal attention
-        context = self.attention(lstm_out)               # (batch, lstm_hidden)
+        context = self.attention(lstm_out)  # (batch, lstm_hidden)
 
         if self.temporal_features > 0:
             temporal_summary = x_temporal.mean(dim=1)
             combined = torch.cat([context, temporal_summary], dim=-1)
         else:
             combined = context
-        return self.fc(combined)                         # (batch, 1)
+        return self.fc(combined)  # (batch, 1)
 
     def forward_with_attention(
         self,
-        x_spatial:  torch.Tensor,
+        x_spatial: torch.Tensor,
         x_temporal: torch.Tensor,
     ):
         """Like forward() but also returns attention weights.
@@ -186,14 +184,14 @@ class CNNLSTMModel(nn.Module):
         """
         batch, window, n_vars, lat, lon = x_spatial.shape
 
-        x_flat   = x_spatial.view(batch * window, n_vars, lat, lon)
+        x_flat = x_spatial.view(batch * window, n_vars, lat, lon)
         features = self.cnn_encoder(x_flat).view(batch, window, -1)
 
         lstm_out, _ = self.lstm(features)
 
-        scores       = self.attention.attn(lstm_out).squeeze(-1)   # (batch, window)
-        attn_weights = torch.softmax(scores, dim=-1)               # (batch, window)
-        context      = (lstm_out * attn_weights.unsqueeze(-1)).sum(dim=1)
+        scores = self.attention.attn(lstm_out).squeeze(-1)  # (batch, window)
+        attn_weights = torch.softmax(scores, dim=-1)  # (batch, window)
+        context = (lstm_out * attn_weights.unsqueeze(-1)).sum(dim=1)
 
         if self.temporal_features > 0:
             temporal_summary = x_temporal.mean(dim=1)
@@ -206,6 +204,7 @@ class CNNLSTMModel(nn.Module):
 # =============================================================================
 # Lightning module
 # =============================================================================
+
 
 class CNNLightningModule(pl.LightningModule):
 
@@ -220,16 +219,16 @@ class CNNLightningModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
 
-        self.model         = model
+        self.model = model
         self.learning_rate = learning_rate
-        self.target_mean   = target_mean
-        self.target_std    = target_std
-        self.loss_fn       = nn.L1Loss() if loss_fn == "MAELoss" else nn.MSELoss()
+        self.target_mean = target_mean
+        self.target_std = target_std
+        self.loss_fn = nn.L1Loss() if loss_fn == "MAELoss" else nn.MSELoss()
 
-        self.test_mae  = MeanAbsoluteError()
+        self.test_mae = MeanAbsoluteError()
         self.test_corr = PearsonCorrCoef()
 
-        self.test_preds   = []
+        self.test_preds = []
         self.test_targets = []
 
     def forward(self, x_spatial, x_temporal):
@@ -238,21 +237,21 @@ class CNNLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x_spatial, x_temporal, y = batch
         y_hat = self(x_spatial, x_temporal)
-        loss  = self.loss_fn(y_hat, y)
+        loss = self.loss_fn(y_hat, y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x_spatial, x_temporal, y = batch
         y_hat = self(x_spatial, x_temporal)
-        loss  = self.loss_fn(y_hat, y)
+        loss = self.loss_fn(y_hat, y)
         self.log("val_loss", loss, on_epoch=True, prog_bar=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         x_spatial, x_temporal, y = batch
         y_hat = self(x_spatial, x_temporal)
-        loss  = self.loss_fn(y_hat, y)
+        loss = self.loss_fn(y_hat, y)
 
         self.test_mae.update(y_hat.squeeze(), y.squeeze())
         self.test_corr.update(y_hat.squeeze(), y.squeeze())
@@ -264,34 +263,39 @@ class CNNLightningModule(pl.LightningModule):
         return loss
 
     def on_test_epoch_end(self):
-        mae  = self.test_mae.compute()
+        mae = self.test_mae.compute()
         corr = self.test_corr.compute()
 
-        self.log("test_mae",  mae)
+        self.log("test_mae", mae)
         self.log("test_corr", corr)
 
-        mae_physical = mae * self.target_std           # back to °C
-        print(f"\nTest results:  MAE={mae:.4f} (norm)  MAE={mae_physical:.4f} °C  Pearson r={corr:.4f}")
+        mae_physical = mae * self.target_std  # back to °C
+        print(
+            f"\nTest results:  MAE={mae:.4f} (norm)  MAE={mae_physical:.4f} °C  Pearson r={corr:.4f}"
+        )
 
         # Save plot only from rank 0 to avoid race condition on shared filesystem
         if not self.trainer.is_global_zero:
             return
 
-        import matplotlib.pyplot as plt
         import os
+
+        import matplotlib.pyplot as plt
 
         log_dir = "outputs"
         if self.trainer and hasattr(self.trainer, "default_root_dir"):
             log_dir = self.trainer.default_root_dir
 
-        preds   = torch.cat(self.test_preds).squeeze()
+        preds = torch.cat(self.test_preds).squeeze()
         targets = torch.cat(self.test_targets).squeeze()
 
         plt.figure(figsize=(12, 4))
-        plt.plot(targets.numpy(), label="True",      alpha=0.7)
-        plt.plot(preds.numpy(),   label="Predicted", alpha=0.7)
+        plt.plot(targets.numpy(), label="True", alpha=0.7)
+        plt.plot(preds.numpy(), label="Predicted", alpha=0.7)
         plt.legend()
-        plt.title(f"Test predictions vs truth  (MAE={mae_physical:.3f} °C, r={corr:.3f})")
+        plt.title(
+            f"Test predictions vs truth  (MAE={mae_physical:.3f} °C, r={corr:.3f})"
+        )
         plt.xlabel("Sample")
         plt.ylabel("SST anomaly normalised (North Sea)")
         plt.tight_layout()

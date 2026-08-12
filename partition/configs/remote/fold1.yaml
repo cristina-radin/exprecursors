@@ -1,4 +1,4 @@
-data_dir: /p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc
+data_dir: ""
 variables:
 - ptho_bot
 - u10
@@ -18,7 +18,7 @@ train_ratio: 0.75
 val_ratio: 0.15
 test_ratio: 0.1
 seed: 42
-output_dir: /p/project1/hai_1127/radin1/exprecursors/experiments/partition/TbotAtm_remote_seed42_fold1
+output_dir: ""
 normalize: true
 clim_ref_start: 1985
 clim_ref_end: 2014

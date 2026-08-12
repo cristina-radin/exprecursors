@@ -7,7 +7,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, commands, testing, and PR conv
 ## Critical reminders (always apply, no exceptions)
 
 **Data file**
-Only: `/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc`
+Set `MHW_DATA_FILE` env var pointing to `merged_daily.nc` (see `.env.example`).
 Never: anything with `_OLD` or `merged_daily_deepSST.nc`.
 
 **Incremental saves**
@@ -15,7 +15,7 @@ Any SLURM job longer than 1 hour must save one `.npz` per fold immediately
 after that fold finishes. Never accumulate results and save at the end.
 
 **SLURM email**
-Always: `cristina.radin@uni-hamburg.de` — never the gmail address.
+Set `SLURM_MAIL` env var before submitting. Never hardcode an email in submit scripts.
 
 ---
 

@@ -22,37 +22,39 @@ Usage:
 
 import argparse
 import re
-import sys
-import numpy as np
+
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 from pathlib import Path
 
-BASE   = Path("split_blockyear")
-OUT    = Path("poster_figures")
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+
+BASE = Path("split_blockyear")
+OUT = Path("poster_figures")
 
 POSTER_RC = {
-    "font.size":        14,
-    "axes.titlesize":   15,
-    "axes.labelsize":   13,
-    "legend.fontsize":  11,
-    "xtick.labelsize":  11,
-    "ytick.labelsize":  11,
-    "axes.spines.top":  False,
+    "font.size": 14,
+    "axes.titlesize": 15,
+    "axes.labelsize": 13,
+    "legend.fontsize": 11,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+    "axes.spines.top": False,
     "axes.spines.right": False,
-    "figure.dpi":       150,
+    "figure.dpi": 150,
 }
 
 EXP_LABELS = {
-    "Atm":     "Atm\n(u10, v10, msl, ssr)",
-    "SSTAtm":  "SST + Atm\n(+to_anom)",
+    "Atm": "Atm\n(u10, v10, msl, ssr)",
+    "SSTAtm": "SST + Atm\n(+to_anom)",
     "TbotAtm": "T$_{bot}$ + Atm\n(+ptho_bot)",
 }
 EXP_COLORS = {
-    "Atm":     "#8da0cb",
-    "SSTAtm":  "#fc8d62",
+    "Atm": "#8da0cb",
+    "SSTAtm": "#fc8d62",
     "TbotAtm": "#66c2a5",
 }
 SPLIT_COLORS = {"train": "steelblue", "val": "darkorange", "test": "crimson"}
@@ -61,6 +63,7 @@ SPLIT_COLORS = {"train": "steelblue", "val": "darkorange", "test": "crimson"}
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def parse_skill_txt(path):
     """Return dict with keys TRAIN/VAL/TEST/OVERALL each holding metric dict."""
@@ -75,7 +78,7 @@ def parse_skill_txt(path):
                 "FAR": float(m.group(2)),
                 "CSI": float(m.group(3)),
                 "ETS": float(m.group(4)),
-                "r":   float(m.group(5)),
+                "r": float(m.group(5)),
             }
         # parse years
         m2 = re.search(rf"{section}\s+years=(\[.*?\])", txt)
@@ -115,13 +118,14 @@ def get_metrics(exp, seeds=(42,), split="TEST"):
         return None, None
     keys = ["POD", "FAR", "CSI", "ETS", "r"]
     mean = {k: np.mean([r[k] for r in rows]) for k in keys}
-    std  = {k: np.std( [r[k] for r in rows]) for k in keys}
+    std = {k: np.std([r[k] for r in rows]) for k in keys}
     return mean, std
 
 
 # ---------------------------------------------------------------------------
 # Figure 1 — Ablation: ETS and r by experiment
 # ---------------------------------------------------------------------------
+
 
 def fig_ablation(seeds, out_dir):
     exps = ["Atm", "SSTAtm", "TbotAtm"]
@@ -131,13 +135,17 @@ def fig_ablation(seeds, out_dir):
         s = seeds
         m, sd = get_metrics(exp, seeds=s, split="TEST")
         if m is None:
-            ets_mean.append(np.nan); ets_std.append(0)
-            r_mean.append(np.nan);   r_std.append(0)
+            ets_mean.append(np.nan)
+            ets_std.append(0)
+            r_mean.append(np.nan)
+            r_std.append(0)
         else:
-            ets_mean.append(m["ETS"]); ets_std.append(sd["ETS"])
-            r_mean.append(m["r"]);     r_std.append(sd["r"])
+            ets_mean.append(m["ETS"])
+            ets_std.append(sd["ETS"])
+            r_mean.append(m["r"])
+            r_std.append(sd["r"])
 
-    x      = np.arange(len(exps))
+    x = np.arange(len(exps))
     labels = [EXP_LABELS[e] for e in exps]
     colors = [EXP_COLORS[e] for e in exps]
 
@@ -147,18 +155,32 @@ def fig_ablation(seeds, out_dir):
         for ax, vals, errs, metric, title, ylim in zip(
             axes,
             [ets_mean, r_mean],
-            [ets_std,  r_std],
-            ["ETS",    "Pearson r"],
+            [ets_std, r_std],
+            ["ETS", "Pearson r"],
             ["Equitable Threat Score (ETS)", "Pearson r"],
             [(0, 0.75), (0, 1.0)],
         ):
-            bars = ax.bar(x, vals, color=colors, alpha=0.88, width=0.55,
-                          yerr=errs if any(e > 0 for e in errs) else None,
-                          capsize=5, error_kw={"lw": 2})
+            bars = ax.bar(
+                x,
+                vals,
+                color=colors,
+                alpha=0.88,
+                width=0.55,
+                yerr=errs if any(e > 0 for e in errs) else None,
+                capsize=5,
+                error_kw={"lw": 2},
+            )
             for bar, v in zip(bars, vals):
                 if not np.isnan(v):
-                    ax.text(bar.get_x() + bar.get_width()/2, v + 0.01,
-                            f"{v:.3f}", ha="center", va="bottom", fontsize=11, fontweight="bold")
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        v + 0.01,
+                        f"{v:.3f}",
+                        ha="center",
+                        va="bottom",
+                        fontsize=11,
+                        fontweight="bold",
+                    )
             ax.set_xticks(x)
             ax.set_xticklabels(labels, fontsize=11)
             ax.set_ylabel(metric)
@@ -168,10 +190,16 @@ def fig_ablation(seeds, out_dir):
             ax.grid(axis="y", alpha=0.3)
 
         n_seeds = len(seeds)
-        note = f"TEST split  |  mean over {n_seeds} random splits (seeds {', '.join(str(s) for s in seeds)})" \
-               if n_seeds > 1 else f"TEST split (seed={seeds[0]})"
-        fig.suptitle(f"MHW prediction skill by input variables — 7-day lead\n{note}",
-                     fontsize=13, y=1.02)
+        note = (
+            f"TEST split  |  mean over {n_seeds} random splits (seeds {', '.join(str(s) for s in seeds)})"
+            if n_seeds > 1
+            else f"TEST split (seed={seeds[0]})"
+        )
+        fig.suptitle(
+            f"MHW prediction skill by input variables — 7-day lead\n{note}",
+            fontsize=13,
+            y=1.02,
+        )
         plt.tight_layout()
         p = out_dir / "fig_ablation.png"
         fig.savefig(p, dpi=150, bbox_inches="tight")
@@ -183,6 +211,7 @@ def fig_ablation(seeds, out_dir):
 # Figure 2 — Metrics table (TEST split)
 # ---------------------------------------------------------------------------
 
+
 def fig_metrics_table(seeds, out_dir):
     exps = ["Atm", "SSTAtm", "TbotAtm"]
     metrics = ["POD", "FAR", "CSI", "ETS", "r"]
@@ -192,13 +221,14 @@ def fig_metrics_table(seeds, out_dir):
         s = seeds
         m, sd = get_metrics(exp, seeds=s, split="TEST")
         if m is None:
-            rows_mean.append([np.nan]*5); rows_std.append([0]*5)
+            rows_mean.append([np.nan] * 5)
+            rows_std.append([0] * 5)
         else:
             rows_mean.append([m[k] for k in metrics])
             rows_std.append([sd[k] for k in metrics])
 
     row_labels = [EXP_LABELS[e].replace("\n", " ") for e in exps]
-    cell_text  = []
+    cell_text = []
     for mean_row, std_row, exp in zip(rows_mean, rows_std, exps):
         s = seeds if exp == "TbotAtm" else (42,)
         row = []
@@ -213,15 +243,16 @@ def fig_metrics_table(seeds, out_dir):
 
     # Color cells: green=good, red=bad (higher=better except FAR where lower=better)
     def cell_color(metric, val):
-        if np.isnan(val): return "#f0f0f0"
+        if np.isnan(val):
+            return "#f0f0f0"
         if metric == "FAR":
             norm = 1 - val  # lower FAR is better → invert
         else:
             norm = val
         norm = np.clip(norm, 0, 1)
-        r = 1 - 0.5*norm
-        g = 0.6 + 0.4*norm
-        b = 0.6 + 0.1*norm
+        r = 1 - 0.5 * norm
+        g = 0.6 + 0.4 * norm
+        b = 0.6 + 0.1 * norm
         return (r, g, b)
 
     cell_colors = []
@@ -243,8 +274,11 @@ def fig_metrics_table(seeds, out_dir):
         table.auto_set_font_size(False)
         table.set_fontsize(13)
         table.scale(1.4, 2.2)
-        ax.set_title("Skill metrics on TEST split  (threshold: to_anom > 0 → MHW)",
-                     fontsize=13, pad=20)
+        ax.set_title(
+            "Skill metrics on TEST split  (threshold: to_anom > 0 → MHW)",
+            fontsize=13,
+            pad=20,
+        )
         plt.tight_layout()
         p = out_dir / "fig_metrics_table.png"
         fig.savefig(p, dpi=150, bbox_inches="tight")
@@ -256,6 +290,7 @@ def fig_metrics_table(seeds, out_dir):
 # Figure 3 — Scatter pred vs obs (TEST split, TbotAtm)
 # ---------------------------------------------------------------------------
 
+
 def fig_scatter_test(seeds, out_dir):
     # Use all data (train+val+test) from seed=42 for the scatter — r=0.877
     d = load_predictions("TbotAtm", seed=42)
@@ -263,18 +298,20 @@ def fig_scatter_test(seeds, out_dir):
         print("  [SKIP] fig_scatter_test — predictions.npz not found")
         return
 
-    preds    = d["preds"]
-    trues    = d["trues"]
-    sp_mask  = d["split_mask"]
+    preds = d["preds"]
+    trues = d["trues"]
+    sp_mask = d["split_mask"]
 
     mhw_true = trues > 0
-    r_all    = float(np.corrcoef(trues, preds)[0, 1])
-    r_test   = float(np.corrcoef(trues[sp_mask=="test"], preds[sp_mask=="test"])[0, 1])
+    r_all = float(np.corrcoef(trues, preds)[0, 1])
+    r_test = float(
+        np.corrcoef(trues[sp_mask == "test"], preds[sp_mask == "test"])[0, 1]
+    )
 
     split_point_colors = {
-        "train": ("#4393c3", "#d6604d"),   # blue / red
-        "val":   ("#74add1", "#f46d43"),
-        "test":  ("#313695", "#a50026"),   # darker
+        "train": ("#4393c3", "#d6604d"),  # blue / red
+        "val": ("#74add1", "#f46d43"),
+        "test": ("#313695", "#a50026"),  # darker
     }
 
     with plt.rc_context(POSTER_RC):
@@ -282,26 +319,50 @@ def fig_scatter_test(seeds, out_dir):
         for sp in ("train", "val", "test"):
             m = sp_mask == sp
             c_no, c_yes = split_point_colors[sp]
-            label_no  = f"No MHW ({sp})" if sp == "test" else None
-            label_yes = f"MHW ({sp})"    if sp == "test" else None
-            ax.scatter(trues[m & ~mhw_true], preds[m & ~mhw_true],
-                       s=5, alpha=0.25, color=c_no,  label=label_no,  rasterized=True)
-            ax.scatter(trues[m &  mhw_true], preds[m &  mhw_true],
-                       s=5, alpha=0.35, color=c_yes, label=label_yes, rasterized=True)
+            label_no = f"No MHW ({sp})" if sp == "test" else None
+            label_yes = f"MHW ({sp})" if sp == "test" else None
+            ax.scatter(
+                trues[m & ~mhw_true],
+                preds[m & ~mhw_true],
+                s=5,
+                alpha=0.25,
+                color=c_no,
+                label=label_no,
+                rasterized=True,
+            )
+            ax.scatter(
+                trues[m & mhw_true],
+                preds[m & mhw_true],
+                s=5,
+                alpha=0.35,
+                color=c_yes,
+                label=label_yes,
+                rasterized=True,
+            )
 
-        lims = [min(trues.min(), preds.min()) - 0.05,
-                max(trues.max(), preds.max()) + 0.05]
+        lims = [
+            min(trues.min(), preds.min()) - 0.05,
+            max(trues.max(), preds.max()) + 0.05,
+        ]
         ax.plot(lims, lims, "k--", lw=1.2, label="Perfect")
         ax.axhline(0, color="k", lw=0.7, ls=":", alpha=0.6)
         ax.axvline(0, color="k", lw=0.7, ls=":", alpha=0.6)
-        ax.set_xlim(lims); ax.set_ylim(lims)
+        ax.set_xlim(lims)
+        ax.set_ylim(lims)
         ax.set_xlabel("Observed  to_anom  (°C relative to 90th pct threshold)")
         ax.set_ylabel("Predicted  to_anom  (°C relative to 90th pct threshold)")
-        ax.set_title(f"TbotAtm — prediction vs observation\n7-day lead  (all splits)")
+        ax.set_title("TbotAtm — prediction vs observation\n7-day lead  (all splits)")
         ax.legend(markerscale=2.5, framealpha=0.8, fontsize=10)
-        ax.text(0.03, 0.97, f"r = {r_all:.3f}  (all)\nr = {r_test:.3f}  (test)",
-                transform=ax.transAxes, va="top", fontsize=13, fontweight="bold",
-                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.85))
+        ax.text(
+            0.03,
+            0.97,
+            f"r = {r_all:.3f}  (all)\nr = {r_test:.3f}  (test)",
+            transform=ax.transAxes,
+            va="top",
+            fontsize=13,
+            fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.85),
+        )
         plt.tight_layout()
         p = out_dir / "fig_scatter_test.png"
         fig.savefig(p, dpi=150, bbox_inches="tight")
@@ -313,40 +374,71 @@ def fig_scatter_test(seeds, out_dir):
 # Figure 4 — Time series for TEST years (TbotAtm seed=42)
 # ---------------------------------------------------------------------------
 
+
 def _plot_year(ax, preds, trues, years, months, yr, split_label):
     """Plot one year's timeseries on ax."""
-    mask  = (years == yr)
-    p_yr  = preds[mask]
-    t_yr  = trues[mask]
-    mos   = months[mask]
+    mask = years == yr
+    p_yr = preds[mask]
+    t_yr = trues[mask]
+    mos = months[mask]
     n_days = mask.sum()
 
     x = np.arange(n_days)
-    mn = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    mn = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    ]
     month_ticks, month_labels, current = [], [], None
     for i, mo in enumerate(mos):
         if mo != current:
-            month_ticks.append(i); month_labels.append(mn[mo-1]); current = mo
+            month_ticks.append(i)
+            month_labels.append(mn[mo - 1])
+            current = mo
 
-    ax.fill_between(x, 0, 1, where=(t_yr > 0),
-                    transform=ax.get_xaxis_transform(),
-                    alpha=0.18, color="tomato", label="True MHW")
-    ax.plot(x, t_yr, color="steelblue", lw=1.6, label="Observed",  alpha=0.95)
-    ax.plot(x, p_yr, color="tomato",    lw=1.6, label="Predicted", alpha=0.9, ls="--")
+    ax.fill_between(
+        x,
+        0,
+        1,
+        where=(t_yr > 0),
+        transform=ax.get_xaxis_transform(),
+        alpha=0.18,
+        color="tomato",
+        label="True MHW",
+    )
+    ax.plot(x, t_yr, color="steelblue", lw=1.6, label="Observed", alpha=0.95)
+    ax.plot(x, p_yr, color="tomato", lw=1.6, label="Predicted", alpha=0.9, ls="--")
     ax.axhline(0, color="k", lw=1.0, ls="-", alpha=0.6)
 
-    ax.set_xticks(month_ticks); ax.set_xticklabels(month_labels, fontsize=11)
+    ax.set_xticks(month_ticks)
+    ax.set_xticklabels(month_labels, fontsize=11)
     ax.set_ylabel("SST anom.\n(°C rel. 90th pct)", fontsize=10)
 
-    tb = (t_yr > 0).astype(int); pb = (p_yr > 0).astype(int)
-    H  = int(((pb==1)&(tb==1)).sum()); FA = int(((pb==1)&(tb==0)).sum())
-    M  = int(((pb==0)&(tb==1)).sum()); CN = int(((pb==0)&(tb==0)).sum())
-    N  = H+FA+M+CN; Hr = (H+M)*(H+FA)/N if N>0 else 0
-    ets_yr = (H-Hr)/(H+M+FA-Hr) if (H+M+FA-Hr)>0 else np.nan
-    r_yr   = float(np.corrcoef(t_yr, p_yr)[0,1])
-    mhw_pct = int(tb.sum())/n_days*100
-    ax.set_title(f"{yr}  [{split_label}]   MHW: {int(tb.sum())} days ({mhw_pct:.0f}%)  "
-                 f"|  ETS = {ets_yr:.3f}   r = {r_yr:.3f}", fontsize=12)
+    tb = (t_yr > 0).astype(int)
+    pb = (p_yr > 0).astype(int)
+    H = int(((pb == 1) & (tb == 1)).sum())
+    FA = int(((pb == 1) & (tb == 0)).sum())
+    M = int(((pb == 0) & (tb == 1)).sum())
+    CN = int(((pb == 0) & (tb == 0)).sum())
+    N = H + FA + M + CN
+    Hr = (H + M) * (H + FA) / N if N > 0 else 0
+    ets_yr = (H - Hr) / (H + M + FA - Hr) if (H + M + FA - Hr) > 0 else np.nan
+    r_yr = float(np.corrcoef(t_yr, p_yr)[0, 1])
+    mhw_pct = int(tb.sum()) / n_days * 100
+    ax.set_title(
+        f"{yr}  [{split_label}]   MHW: {int(tb.sum())} days ({mhw_pct:.0f}%)  "
+        f"|  ETS = {ets_yr:.3f}   r = {r_yr:.3f}",
+        fontsize=12,
+    )
     ax.legend(fontsize=10, loc="lower right", ncol=4)
     ax.grid(alpha=0.25)
 
@@ -357,10 +449,10 @@ def fig_timeseries_test(seeds, out_dir):
         print("  [SKIP] fig_timeseries_test — predictions.npz not found")
         return
 
-    preds      = d["preds"]
-    trues      = d["trues"]
-    years      = d["years"]
-    months     = d["months"]
+    preds = d["preds"]
+    trues = d["trues"]
+    years = d["years"]
+    months = d["months"]
     split_mask = d["split_mask"]
 
     # Show 2023 (VAL, dramatic MHW year) + best test year (1998, ETS=0.74)
@@ -371,9 +463,14 @@ def fig_timeseries_test(seeds, out_dir):
     ]
 
     with plt.rc_context(POSTER_RC):
-        fig, axes = plt.subplots(len(showcase), 1, figsize=(14, 4*len(showcase)), sharex=False)
-        fig.suptitle("TbotAtm — predicted vs observed SST anomaly  (7-day lead)",
-                     fontsize=14, y=1.01)
+        fig, axes = plt.subplots(
+            len(showcase), 1, figsize=(14, 4 * len(showcase)), sharex=False
+        )
+        fig.suptitle(
+            "TbotAtm — predicted vs observed SST anomaly  (7-day lead)",
+            fontsize=14,
+            y=1.01,
+        )
 
         for ax, (yr, label) in zip(axes, showcase):
             _plot_year(ax, preds, trues, years, months, yr, label)
@@ -388,6 +485,7 @@ def fig_timeseries_test(seeds, out_dir):
 # ---------------------------------------------------------------------------
 # Figure 5 — Per-year skill (TbotAtm seed=42)
 # ---------------------------------------------------------------------------
+
 
 def fig_peryear_skill(seeds, out_dir):
     txt = BASE / "TbotAtm" / "eval_results" / "skill_scores.txt"
@@ -406,30 +504,34 @@ def fig_peryear_skill(seeds, out_dir):
             parts = line.split()
             if len(parts) >= 7:
                 try:
-                    yr   = int(parts[0])
-                    sp   = parts[1]
-                    pod  = float(parts[3])
-                    far  = float(parts[4])
-                    ets  = float(parts[6])
-                    r    = float(parts[7])
+                    yr = int(parts[0])
+                    sp = parts[1]
+                    pod = float(parts[3])
+                    far = float(parts[4])
+                    ets = float(parts[6])
+                    r = float(parts[7])
                     rows.append((yr, sp, pod, far, ets, r))
                 except (ValueError, IndexError):
                     continue
 
     if not rows:
-        print("  [SKIP] fig_peryear_skill — per-year table empty (re-run skill_scores.py)")
+        print(
+            "  [SKIP] fig_peryear_skill — per-year table empty (re-run skill_scores.py)"
+        )
         return
 
-    yr_arr  = np.array([r[0] for r in rows])
-    sp_arr  = np.array([r[1] for r in rows])
+    yr_arr = np.array([r[0] for r in rows])
+    sp_arr = np.array([r[1] for r in rows])
     ets_arr = np.array([r[4] for r in rows])
-    r_arr   = np.array([r[5] for r in rows])
+    r_arr = np.array([r[5] for r in rows])
     bar_colors = [SPLIT_COLORS.get(s, "gray") for s in sp_arr]
 
     with plt.rc_context(POSTER_RC):
         fig, axes = plt.subplots(2, 1, figsize=(14, 7), sharex=True)
-        legend_patches = [mpatches.Patch(color=c, label=s.capitalize())
-                          for s, c in SPLIT_COLORS.items()]
+        legend_patches = [
+            mpatches.Patch(color=c, label=s.capitalize())
+            for s, c in SPLIT_COLORS.items()
+        ]
 
         ax = axes[0]
         ax.bar(yr_arr, ets_arr, color=bar_colors, alpha=0.85, width=0.7)
@@ -457,13 +559,22 @@ def fig_peryear_skill(seeds, out_dir):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", default="poster_figures")
-    parser.add_argument("--seeds", nargs="+", type=int, default=[42],
-                        help="Seeds to aggregate for TbotAtm (default: 42)")
-    parser.add_argument("--exp_dir", default="split_blockyear",
-                        help="Base directory for experiments (default: split_blockyear)")
+    parser.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        default=[42],
+        help="Seeds to aggregate for TbotAtm (default: 42)",
+    )
+    parser.add_argument(
+        "--exp_dir",
+        default="split_blockyear",
+        help="Base directory for experiments (default: split_blockyear)",
+    )
     args = parser.parse_args()
 
     global BASE

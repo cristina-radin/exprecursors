@@ -16,12 +16,12 @@ Usage:
 
 import argparse
 import sys
-import numpy as np
-import xarray as xr
-import matplotlib.pyplot as plt
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
+import xarray as xr
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -29,10 +29,10 @@ from src.data.datamodule import LazyDataModule
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 from src.xai.utils import load_config
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def collect_predictions(lightning_module, full_ds, device):
     """
@@ -61,8 +61,7 @@ def collect_predictions(lightning_module, full_ds, device):
                 print(f"  Predictions: {idx+1}/{len(full_ds)}", end="\r")
 
     print(f"  Predictions done: {len(full_ds)} samples")
-    return (np.array(preds), np.array(trues),
-            np.array(years), np.array(months))
+    return (np.array(preds), np.array(trues), np.array(years), np.array(months))
 
 
 SEASONS = {
@@ -73,9 +72,17 @@ SEASONS = {
 }
 
 
-def top_indices_for_period(preds, years, year_start, year_end, n,
-                           extreme="high", min_separation=60,
-                           months=None, months_filter=None):
+def top_indices_for_period(
+    preds,
+    years,
+    year_start,
+    year_end,
+    n,
+    extreme="high",
+    min_separation=60,
+    months=None,
+    months_filter=None,
+):
     """
     Return up to n extreme samples within [year_start, year_end] with
     at least min_separation days between selected indices (avoids picking
@@ -96,9 +103,9 @@ def top_indices_for_period(preds, years, year_start, year_end, n,
 
     order = np.argsort(preds[idx_in_period])
     if extreme == "high":
-        candidates = idx_in_period[order[::-1]]   # highest first
+        candidates = idx_in_period[order[::-1]]  # highest first
     else:
-        candidates = idx_in_period[order]          # lowest first
+        candidates = idx_in_period[order]  # lowest first
 
     # Greedy selection: keep event only if far enough from already-selected ones
     selected = []
@@ -126,10 +133,18 @@ def plot_period_comparison(cam_dict, lat, lon, title, save_path):
 
     vmax = max(v.max() for v in cam_dict.values())
     for ax, period in zip(axes, periods):
-        im = ax.imshow(cam_dict[period], origin="lower", extent=extent,
-                       cmap="YlOrRd", vmin=0, vmax=vmax, aspect="auto")
+        im = ax.imshow(
+            cam_dict[period],
+            origin="lower",
+            extent=extent,
+            cmap="YlOrRd",
+            vmin=0,
+            vmax=vmax,
+            aspect="auto",
+        )
         ax.set_title(period, fontsize=10)
-        ax.set_xlabel("lon"); ax.set_ylabel("lat")
+        ax.set_xlabel("lon")
+        ax.set_ylabel("lat")
         plt.colorbar(im, ax=ax, fraction=0.03)
 
     fig.suptitle(title, fontsize=11)
@@ -143,10 +158,10 @@ def plot_ig_temporal(ig_temporal_dict, variables, save_path):
     Temporal attribution profile per variable, one subplot per variable.
     ig_temporal_dict: {period_label: array (window, n_vars)}
     """
-    periods  = list(ig_temporal_dict.keys())
-    n_vars   = len(variables)
-    window   = next(iter(ig_temporal_dict.values())).shape[0]
-    days     = np.arange(-window + 1, 1)
+    periods = list(ig_temporal_dict.keys())
+    n_vars = len(variables)
+    window = next(iter(ig_temporal_dict.values())).shape[0]
+    days = np.arange(-window + 1, 1)
 
     fig, axes = plt.subplots(n_vars, 1, figsize=(12, 3 * n_vars), sharey=False)
     if n_vars == 1:
@@ -164,7 +179,9 @@ def plot_ig_temporal(ig_temporal_dict, variables, save_path):
             ax.set_xlabel("Day relative to last input day")
 
     axes[-1].legend(fontsize=9)
-    fig.suptitle("Temporal attribution profile per variable — Integrated Gradients", fontsize=11)
+    fig.suptitle(
+        "Temporal attribution profile per variable — Integrated Gradients", fontsize=11
+    )
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
@@ -194,12 +211,12 @@ def plot_ig_comparison(ig_dict, variables, ocean_vars, save_path):
 def plot_attention_comparison(attn_dict, save_path):
     """Mean attention weight profiles per period."""
     window = len(next(iter(attn_dict.values()))[0])  # length of one attn array
-    days   = np.arange(-window + 1, 1)
+    days = np.arange(-window + 1, 1)
 
     fig, ax = plt.subplots(figsize=(10, 4))
     for period, attn_list in attn_dict.items():
         mean_attn = np.stack(attn_list).mean(axis=0)
-        std_attn  = np.stack(attn_list).std(axis=0)
+        std_attn = np.stack(attn_list).std(axis=0)
         ax.plot(days, mean_attn, label=period)
         ax.fill_between(days, mean_attn - std_attn, mean_attn + std_attn, alpha=0.2)
 
@@ -217,29 +234,46 @@ def plot_attention_comparison(attn_dict, save_path):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint",  type=str, required=True)
-    parser.add_argument("--config",      type=str, default="config.yaml")
-    parser.add_argument("--output_dir",  type=str, default="xai_results")
-    parser.add_argument("--n_events",    type=int, default=10,
-                        help="Top events per period for Grad-CAM")
-    parser.add_argument("--n_ig",        type=int, default=30,
-                        help="Events per period for Integrated Gradients")
-    parser.add_argument("--periods",     type=str,
-                        default="1985-2004,2005-2014,2015-2024",
-                        help="Comma-separated year ranges, e.g. '1985-2004,2005-2024'")
-    parser.add_argument("--seasons",     type=str, default=None,
-                        help="If set, run XAI by season instead of year ranges. "
-                             "E.g. 'DJF,MAM,JJA,SON' or any subset. "
-                             "Overrides --periods.")
-    parser.add_argument("--season_years", type=str, default=None,
-                        help="Year range for seasonal mode, e.g. '1985-2024'. "
-                             "Defaults to full dataset range.")
-    parser.add_argument("--no_cuda",     action="store_true")
+    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--config", type=str, default="config.yaml")
+    parser.add_argument("--output_dir", type=str, default="xai_results")
+    parser.add_argument(
+        "--n_events", type=int, default=10, help="Top events per period for Grad-CAM"
+    )
+    parser.add_argument(
+        "--n_ig",
+        type=int,
+        default=30,
+        help="Events per period for Integrated Gradients",
+    )
+    parser.add_argument(
+        "--periods",
+        type=str,
+        default="1985-2004,2005-2014,2015-2024",
+        help="Comma-separated year ranges, e.g. '1985-2004,2005-2024'",
+    )
+    parser.add_argument(
+        "--seasons",
+        type=str,
+        default=None,
+        help="If set, run XAI by season instead of year ranges. "
+        "E.g. 'DJF,MAM,JJA,SON' or any subset. "
+        "Overrides --periods.",
+    )
+    parser.add_argument(
+        "--season_years",
+        type=str,
+        default=None,
+        help="Year range for seasonal mode, e.g. '1985-2024'. "
+        "Defaults to full dataset range.",
+    )
+    parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()
 
-    config     = load_config(args.config)
+    config = load_config(args.config)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
@@ -256,7 +290,8 @@ def main():
         # periods here are (y0, y1, label, months_filter)
         periods = [
             (season_y0, season_y1, s, SEASONS[s])
-            for s in seasons_requested if s in SEASONS
+            for s in seasons_requested
+            if s in SEASONS
         ]
         seasonal_mode = True
     else:
@@ -270,13 +305,15 @@ def main():
     cnn_lstm = CNNLSTMModel(
         in_channels=config["in_channels"],
         cnn_features=config.get("cnn_features", 128),
-        lstm_hidden=config.get("lstm_hidden",   256),
-        lstm_layers=config.get("lstm_layers",     2),
+        lstm_hidden=config.get("lstm_hidden", 256),
+        lstm_layers=config.get("lstm_layers", 2),
         temporal_features=3,
         dropout=config.get("dropout", 0.3),
     )
     lm = CNNLightningModule.load_from_checkpoint(
-        args.checkpoint, model=cnn_lstm, map_location=device,
+        args.checkpoint,
+        model=cnn_lstm,
+        map_location=device,
     )
     lm.eval().to(device)
     print(f"Loaded: {args.checkpoint}")
@@ -286,38 +323,40 @@ def main():
     # Use the datamodule to reproduce the exact stats from training
     dm = LazyDataModule(config_path=args.config)
     dm.setup()
-    full_ds = dm.train_dataset.dataset   # underlying dataset, shared by all splits
+    full_ds = dm.train_dataset.dataset  # underlying dataset, shared by all splits
 
     # Grid coordinates
-    ds  = xr.open_dataset(config["data_dir"])
+    ds = xr.open_dataset(config["data_dir"])
     lat = ds.lat.values
     lon = ds.lon.values
     ds.close()
 
-    variables  = config["variables"]
+    variables = config["variables"]
     ocean_vars = set(config.get("ocean_variables", variables))
 
-    print(f"\nFull dataset: {len(full_ds)} samples  "
-          f"({full_ds.years[full_ds.window_size]} – "
-          f"{full_ds.years[-full_ds.lead_time - 1]})")
+    print(
+        f"\nFull dataset: {len(full_ds)} samples  "
+        f"({full_ds.years[full_ds.window_size]} – "
+        f"{full_ds.years[-full_ds.lead_time - 1]})"
+    )
 
     # --- Collect all predictions ---
     print("\nCollecting predictions over full dataset...")
     preds, trues, years, months = collect_predictions(lm, full_ds, device)
 
     # --- Per-period XAI ---
-    from src.xai.grad_cam import AttentionGradCAM, _plot_cam, _plot_attention
+    from src.xai.grad_cam import AttentionGradCAM, _plot_attention, _plot_cam
     from src.xai.integrated_gradients import (
-        _integrated_gradients, analyze_integrated_gradients
+        _integrated_gradients,
     )
 
     gradcam_engine = AttentionGradCAM(lm)
 
     # Accumulators for comparison plots
-    cam_high_mean    = {}   # period_label → mean cam (lat, lon)
-    ig_importance    = {}   # period_label → {var: value}
-    ig_temporal      = {}   # period_label → (window, n_vars) temporal attribution
-    attn_by_period   = {}   # period_label → list of attn arrays
+    cam_high_mean = {}  # period_label → mean cam (lat, lon)
+    ig_importance = {}  # period_label → {var: value}
+    ig_temporal = {}  # period_label → (window, n_vars) temporal attribution
+    attn_by_period = {}  # period_label → list of attn arrays
 
     # In seasonal mode, extend year range to full dataset if not specified
     if seasonal_mode and args.season_years is None:
@@ -333,17 +372,37 @@ def main():
         period_dir.mkdir(exist_ok=True)
 
         sep = config.get("window_size", 60)
-        idx_high = top_indices_for_period(preds, years, y0, y1, args.n_events, "high", sep,
-                                          months=months, months_filter=months_filter)
-        idx_low  = top_indices_for_period(preds, years, y0, y1, args.n_events, "low",  sep,
-                                          months=months, months_filter=months_filter)
+        idx_high = top_indices_for_period(
+            preds,
+            years,
+            y0,
+            y1,
+            args.n_events,
+            "high",
+            sep,
+            months=months,
+            months_filter=months_filter,
+        )
+        idx_low = top_indices_for_period(
+            preds,
+            years,
+            y0,
+            y1,
+            args.n_events,
+            "low",
+            sep,
+            months=months,
+            months_filter=months_filter,
+        )
 
         if len(idx_high) == 0:
             print(f"  No samples in period {label}, skipping.")
             continue
 
-        print(f"  High-anomaly events: {len(idx_high)}  "
-              f"(pred range {preds[idx_high].min():.2f}–{preds[idx_high].max():.2f})")
+        print(
+            f"  High-anomaly events: {len(idx_high)}  "
+            f"(pred range {preds[idx_high].min():.2f}–{preds[idx_high].max():.2f})"
+        )
         print(f"  Low-anomaly events:  {len(idx_low)}")
 
         # --- Grad-CAM ---
@@ -356,20 +415,31 @@ def main():
             cam, attn = gradcam_engine.compute(xs_dev, xt_dev)
 
             yr, mo = years[idx], months[idx]
-            label_s = (f"high #{rank+1}  {yr}-{mo:02d}  "
-                       f"pred={preds[idx]:.2f}  true={trues[idx]:.2f}")
+            label_s = (
+                f"high #{rank+1}  {yr}-{mo:02d}  "
+                f"pred={preds[idx]:.2f}  true={trues[idx]:.2f}"
+            )
             cams_high.append(cam)
             attn_high.append(attn)
             preds_high.append(abs(preds[idx]))
 
-            _plot_cam(cam, xs.numpy(), variables, ocean_vars,
-                      lat, lon, label_s,
-                      period_dir / f"gradcam_high_{rank+1}_{yr}.png")
+            _plot_cam(
+                cam,
+                xs.numpy(),
+                variables,
+                ocean_vars,
+                lat,
+                lon,
+                label_s,
+                period_dir / f"gradcam_high_{rank+1}_{yr}.png",
+            )
 
         # Weighted average: weight each event by its prediction magnitude
         weights = np.array(preds_high)
         weights = weights / weights.sum()
-        cam_high_mean[label] = (np.stack(cams_high) * weights[:, None, None]).sum(axis=0)
+        cam_high_mean[label] = (np.stack(cams_high) * weights[:, None, None]).sum(
+            axis=0
+        )
         attn_by_period[label] = attn_high
 
         # Low-anomaly Grad-CAM
@@ -379,25 +449,44 @@ def main():
             xt_dev = xt.unsqueeze(0).to(device)
             cam, attn = gradcam_engine.compute(xs_dev, xt_dev)
             yr, mo = years[idx], months[idx]
-            label_s = (f"low #{rank+1}  {yr}-{mo:02d}  "
-                       f"pred={preds[idx]:.2f}  true={trues[idx]:.2f}")
-            _plot_cam(cam, xs.numpy(), variables, ocean_vars,
-                      lat, lon, label_s,
-                      period_dir / f"gradcam_low_{rank+1}_{yr}.png")
+            label_s = (
+                f"low #{rank+1}  {yr}-{mo:02d}  "
+                f"pred={preds[idx]:.2f}  true={trues[idx]:.2f}"
+            )
+            _plot_cam(
+                cam,
+                xs.numpy(),
+                variables,
+                ocean_vars,
+                lat,
+                lon,
+                label_s,
+                period_dir / f"gradcam_low_{rank+1}_{yr}.png",
+            )
 
         # Attention summary for this period
-        _plot_attention(attn_high,
-                        [f"{years[i]}-{months[i]:02d}" for i in idx_high],
-                        period_dir / "attention_weights.png")
+        _plot_attention(
+            attn_high,
+            [f"{years[i]}-{months[i]:02d}" for i in idx_high],
+            period_dir / "attention_weights.png",
+        )
 
         # --- Integrated Gradients ---
         print(f"  Running Integrated Gradients ({args.n_ig} samples)...")
-        ig_idx = top_indices_for_period(preds, years, y0, y1,
-                                        args.n_ig, "high", sep,
-                                        months=months, months_filter=months_filter)
-        window_size    = config.get("window_size", 60)
-        spatial_accum  = np.zeros((len(variables), len(lat), len(lon)))
-        global_accum   = np.zeros(len(variables))
+        ig_idx = top_indices_for_period(
+            preds,
+            years,
+            y0,
+            y1,
+            args.n_ig,
+            "high",
+            sep,
+            months=months,
+            months_filter=months_filter,
+        )
+        window_size = config.get("window_size", 60)
+        spatial_accum = np.zeros((len(variables), len(lat), len(lon)))
+        global_accum = np.zeros(len(variables))
         temporal_accum = np.zeros((window_size, len(variables)))
 
         for k, idx in enumerate(ig_idx):
@@ -407,39 +496,45 @@ def main():
                 xs.unsqueeze(0).to(device),
                 xt.unsqueeze(0).to(device),
             )
-            abs_a           = attrs.abs()                              # (window, n_vars, lat, lon)
-            spatial_accum  += abs_a.mean(dim=0).numpy()                # (n_vars, lat, lon)
-            global_accum   += abs_a.mean(dim=(0, 2, 3)).numpy()        # (n_vars,)
-            temporal_accum += abs_a.mean(dim=(2, 3)).numpy()           # (window, n_vars)
+            abs_a = attrs.abs()  # (window, n_vars, lat, lon)
+            spatial_accum += abs_a.mean(dim=0).numpy()  # (n_vars, lat, lon)
+            global_accum += abs_a.mean(dim=(0, 2, 3)).numpy()  # (n_vars,)
+            temporal_accum += abs_a.mean(dim=(2, 3)).numpy()  # (window, n_vars)
             print(f"    IG {k+1}/{len(ig_idx)}", end="\r")
         print()
 
         if len(ig_idx) > 0:
-            spatial_accum  /= len(ig_idx)
-            global_accum   /= len(ig_idx)
+            spatial_accum /= len(ig_idx)
+            global_accum /= len(ig_idx)
             temporal_accum /= len(ig_idx)
             ig_importance[label] = dict(zip(variables, global_accum))
-            ig_temporal[label]   = temporal_accum
+            ig_temporal[label] = temporal_accum
 
             # Spatial maps per variable
             # Build dilated land mask to suppress coastline gradient artifact
             from scipy.ndimage import binary_dilation
-            land_mask_np = full_ds.tierra_mask.numpy()           # True = land
-            coast_mask   = binary_dilation(land_mask_np, iterations=2)  # 2-pixel buffer
+
+            land_mask_np = full_ds.tierra_mask.numpy()  # True = land
+            coast_mask = binary_dilation(land_mask_np, iterations=2)  # 2-pixel buffer
 
             extent = [lon.min(), lon.max(), lat.min(), lat.max()]
             for i, var in enumerate(variables):
                 data = spatial_accum[i].copy()
-                data = np.where(coast_mask, np.nan, data)  # mask land + coastline buffer
+                data = np.where(
+                    coast_mask, np.nan, data
+                )  # mask land + coastline buffer
                 fig, ax = plt.subplots(figsize=(8, 4))
-                im = ax.imshow(data, origin="lower", extent=extent,
-                               cmap="YlOrRd", aspect="auto")
+                im = ax.imshow(
+                    data, origin="lower", extent=extent, cmap="YlOrRd", aspect="auto"
+                )
                 ax.set_title(f"IG {var} — {label}")
-                ax.set_xlabel("lon"); ax.set_ylabel("lat")
+                ax.set_xlabel("lon")
+                ax.set_ylabel("lat")
                 plt.colorbar(im, ax=ax, label="|attribution|")
                 plt.tight_layout()
-                plt.savefig(period_dir / f"ig_spatial_{var}.png",
-                            dpi=150, bbox_inches="tight")
+                plt.savefig(
+                    period_dir / f"ig_spatial_{var}.png", dpi=150, bbox_inches="tight"
+                )
                 plt.close()
 
         print(f"  Period {label} done. Files in {period_dir}/")
@@ -449,7 +544,9 @@ def main():
 
     if len(cam_high_mean) > 1:
         plot_period_comparison(
-            cam_high_mean, lat, lon,
+            cam_high_mean,
+            lat,
+            lon,
             "Mean Grad-CAM — high-anomaly events by period",
             output_dir / "comparison_gradcam.png",
         )
@@ -457,7 +554,9 @@ def main():
 
     if len(ig_importance) > 1:
         plot_ig_comparison(
-            ig_importance, variables, ocean_vars,
+            ig_importance,
+            variables,
+            ocean_vars,
             output_dir / "comparison_ig_importance.png",
         )
         print("  Saved comparison_ig_importance.png")
@@ -471,7 +570,8 @@ def main():
 
     if len(ig_temporal) > 0:
         plot_ig_temporal(
-            ig_temporal, variables,
+            ig_temporal,
+            variables,
             output_dir / "comparison_ig_temporal.png",
         )
         print("  Saved comparison_ig_temporal.png")

@@ -14,45 +14,53 @@ Usage:
 
 import argparse
 import sys
+
+import matplotlib
 import numpy as np
 import xarray as xr
-import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
 from datamodule import LazyDataModule
 from model import CNNLightningModule, CNNLSTMModel
-from xai.utils import load_config
-from xai.integrated_gradients import _integrated_gradients
 
-FONTSIZE  = 18
+from xai.integrated_gradients import _integrated_gradients
+from xai.utils import load_config
+
+FONTSIZE = 18
 TITLESIZE = 20
 
 VAR_LABELS = {
     "ptho_bot": "T$_{bottom}$",
-    "to_anom":  "SST anom.",
-    "u10":      "U-wind",
-    "v10":      "V-wind",
-    "msl":      "SLP",
-    "ssr":      "Solar rad.",
+    "to_anom": "SST anom.",
+    "u10": "U-wind",
+    "v10": "V-wind",
+    "msl": "SLP",
+    "ssr": "Solar rad.",
 }
 
 # Bins defined relative to window start (day 0 = oldest, day 59 = t-7)
 BINS = [
-    ("Early\n(day −60 to −41)", slice(0,  20)),
-    ("Mid\n(day −40 to −21)",   slice(20, 40)),
+    ("Early\n(day −60 to −41)", slice(0, 20)),
+    ("Mid\n(day −40 to −21)", slice(20, 40)),
     ("Recent\n(day −20 to −1)", slice(40, 60)),
 ]
 
 
 def best_checkpoint(exp_dir):
     ckpts = list((exp_dir / "checkpoints").glob("*.ckpt"))
+
     def val_loss(p):
-        try:   return float(str(p).split("val_loss=")[1].replace(".ckpt", ""))
-        except: return float("inf")
+        try:
+            return float(str(p).split("val_loss=")[1].replace(".ckpt", ""))
+        except:
+            return float("inf")
+
     return min(ckpts, key=val_loss)
 
 
@@ -87,42 +95,42 @@ def sep_indices(preds, n, sep=60):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_dirs", nargs="+", required=True)
-    parser.add_argument("--npz",      required=True)
-    parser.add_argument("--output",   default="poster_figures/fig_ig_spatiotemporal.png")
-    parser.add_argument("--n_ig",     type=int, default=50)
-    parser.add_argument("--no_cuda",  action="store_true")
+    parser.add_argument("--npz", required=True)
+    parser.add_argument("--output", default="poster_figures/fig_ig_spatiotemporal.png")
+    parser.add_argument("--n_ig", type=int, default=50)
+    parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()
 
-    device   = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     exp_dirs = [Path(d) for d in args.exp_dirs]
 
-    config0   = load_config(str(exp_dirs[0] / "config.yaml"))
+    config0 = load_config(str(exp_dirs[0] / "config.yaml"))
     variables = config0["variables"]
-    n_vars    = len(variables)
+    n_vars = len(variables)
 
     ds_xr = xr.open_dataset(config0["data_dir"])
-    lat   = ds_xr.lat.values
-    lon   = ds_xr.lon.values
+    lat = ds_xr.lat.values
+    lon = ds_xr.lon.values
     ds_xr.close()
 
-    d          = np.load(args.npz, allow_pickle=True)
-    ens_pred   = d["ens_full"]
+    d = np.load(args.npz, allow_pickle=True)
+    ens_pred = d["ens_full"]
     idx_events = sep_indices(ens_pred, args.n_ig, sep=60)
     print(f"Selected {len(idx_events)} top events")
 
     # Accumulate: (n_bins, n_vars, lat, lon)
-    n_bins   = len(BINS)
+    n_bins = len(BINS)
     n_lat, n_lon = len(lat), len(lon)
-    accum    = np.zeros((n_bins, n_vars, n_lat, n_lon))
-    count    = 0
+    accum = np.zeros((n_bins, n_vars, n_lat, n_lon))
+    count = 0
 
     for exp_dir in exp_dirs:
-        config  = load_config(str(exp_dir / "config.yaml"))
-        lm      = load_model(best_checkpoint(exp_dir), config, device)
-        dm      = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
+        config = load_config(str(exp_dir / "config.yaml"))
+        lm = load_model(best_checkpoint(exp_dir), config, device)
+        dm = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
         dm.setup()
         full_ds = dm.train_dataset.dataset
-        seed    = config.get("seed", "?")
+        seed = config.get("seed", "?")
         print(f"  Seed={seed} IG...")
 
         for k, idx in enumerate(idx_events):
@@ -132,23 +140,23 @@ def main():
                 xs.unsqueeze(0).to(device),
                 xt.unsqueeze(0).to(device),
             )  # (window, n_vars, lat, lon)
-            abs_attrs = attrs.abs().numpy()   # (60, n_vars, lat, lon)
+            abs_attrs = attrs.abs().numpy()  # (60, n_vars, lat, lon)
 
             for b, (_, sl) in enumerate(BINS):
-                accum[b] += abs_attrs[sl].mean(axis=0)   # (n_vars, lat, lon)
+                accum[b] += abs_attrs[sl].mean(axis=0)  # (n_vars, lat, lon)
 
             count += 1
             print(f"    {k+1}/{len(idx_events)}", end="\r")
         print()
 
-    accum /= count   # (n_bins, n_vars, lat, lon)
+    accum /= count  # (n_bins, n_vars, lat, lon)
 
     # --- Figure: rows = variables, cols = time bins ---
     extent = [lon.min(), lon.max(), lat.min(), lat.max()]
 
-    fig, axes = plt.subplots(n_vars, n_bins,
-                             figsize=(5 * n_bins, 4 * n_vars),
-                             squeeze=False)
+    fig, axes = plt.subplots(
+        n_vars, n_bins, figsize=(5 * n_bins, 4 * n_vars), squeeze=False
+    )
 
     for i, var in enumerate(variables):
         # Normalize each variable globally across all bins so bins are comparable
@@ -156,10 +164,17 @@ def main():
         vmax = vmax if vmax > 0 else 1.0
 
         for b, (bin_name, _) in enumerate(BINS):
-            ax   = axes[i][b]
+            ax = axes[i][b]
             data = accum[b, i].copy()
-            im   = ax.imshow(data / vmax, origin="lower", extent=extent,
-                             cmap="YlOrRd", vmin=0, vmax=1, aspect="auto")
+            im = ax.imshow(
+                data / vmax,
+                origin="lower",
+                extent=extent,
+                cmap="YlOrRd",
+                vmin=0,
+                vmax=1,
+                aspect="auto",
+            )
             if i == 0:
                 ax.set_title(bin_name, fontsize=FONTSIZE, fontweight="bold", pad=8)
             if b == 0:
@@ -181,7 +196,9 @@ def main():
     fig.suptitle(
         f"Spatial IG attribution by window position — Integrated Gradients\n"
         f"Ensemble of {n_seeds} seeds  ·  top-{len(idx_events)} MHW events  ·  7-day lead",
-        fontsize=TITLESIZE, fontweight="bold", y=1.01,
+        fontsize=TITLESIZE,
+        fontweight="bold",
+        y=1.01,
     )
 
     out = Path(args.output)
@@ -199,10 +216,17 @@ def main():
 
         fig2, axes2 = plt.subplots(1, n_bins, figsize=(6 * n_bins, 5))
         for b, (bin_name, _) in enumerate(BINS):
-            ax   = axes2[b]
+            ax = axes2[b]
             data = accum[b, vi].copy()
-            im   = ax.imshow(data / vmax, origin="lower", extent=extent,
-                             cmap="YlOrRd", vmin=0, vmax=1, aspect="auto")
+            im = ax.imshow(
+                data / vmax,
+                origin="lower",
+                extent=extent,
+                cmap="YlOrRd",
+                vmin=0,
+                vmax=1,
+                aspect="auto",
+            )
             ax.set_title(bin_name, fontsize=FONTSIZE, fontweight="bold", pad=8)
             ax.tick_params(labelsize=FONTSIZE - 4)
             if b > 0:
@@ -218,7 +242,8 @@ def main():
         fig2.suptitle(
             f"T$_{{bottom}}$ spatial attribution by window position\n"
             f"Ensemble of {n_seeds} seeds  ·  top-{len(idx_events)} MHW events  ·  7-day lead",
-            fontsize=TITLESIZE, fontweight="bold",
+            fontsize=TITLESIZE,
+            fontweight="bold",
         )
         out2 = out.parent / (out.stem + "_pthobot.png")
         plt.tight_layout()

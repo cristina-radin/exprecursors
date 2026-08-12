@@ -11,22 +11,26 @@ Skip in fast CI with: pytest -m "not slow"
 
 import re
 import sys
-import pytest
-import numpy as np
-import torch
-import yaml
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import numpy as np
+import pytest
+import torch
+import yaml
 
-KFOLD_BASE = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/kfold")
-EXPERIMENT  = "TbotAtm_lstmonly"
-DATA_FILE   = "/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc"
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.utils.paths import DATA_FILE as DATA_FILE_ENV
+from src.utils.paths import EXPERIMENTS_DIR
+
+KFOLD_BASE = EXPERIMENTS_DIR / "kfold"
+EXPERIMENT = "TbotAtm_lstmonly"
+DATA_FILE = str(DATA_FILE_ENV)
 
 
 def _best_ckpt(ckpt_dir: Path) -> Path:
-    ckpts = [c for c in ckpt_dir.glob("*.ckpt")
-             if not re.search(r"-v\d+\.ckpt$", str(c))]
+    ckpts = [
+        c for c in ckpt_dir.glob("*.ckpt") if not re.search(r"-v\d+\.ckpt$", str(c))
+    ]
     if not ckpts:
         return None
 
@@ -37,8 +41,9 @@ def _best_ckpt(ckpt_dir: Path) -> Path:
     return min(ckpts, key=val_loss)
 
 
-def _load_fold_pred(fold: int, dummy_xs: torch.Tensor,
-                    dummy_xt: torch.Tensor) -> np.ndarray:
+def _load_fold_pred(
+    fold: int, dummy_xs: torch.Tensor, dummy_xt: torch.Tensor
+) -> np.ndarray:
     from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 
     fold_dir = KFOLD_BASE / f"{EXPERIMENT}_fold{fold}"
@@ -54,17 +59,17 @@ def _load_fold_pred(fold: int, dummy_xs: torch.Tensor,
 
     with open(cfg_path) as f:
         config = yaml.safe_load(f)
-    config["data_dir"] = DATA_FILE   # override stale path
+    config["data_dir"] = DATA_FILE  # override stale path
 
     model = CNNLSTMModel(
-        in_channels       = config["in_channels"],
-        cnn_features      = config.get("cnn_features",    256),
-        lstm_hidden       = config.get("lstm_hidden",      512),
-        lstm_layers       = config.get("lstm_layers",        2),
-        temporal_features = config.get("temporal_features",  0),
-        dropout           = 0.0,
-        arch              = config.get("arch",       "lstm_only"),
-        gaussian_nll      = config.get("gaussian_nll",   False),
+        in_channels=config["in_channels"],
+        cnn_features=config.get("cnn_features", 256),
+        lstm_hidden=config.get("lstm_hidden", 512),
+        lstm_layers=config.get("lstm_layers", 2),
+        temporal_features=config.get("temporal_features", 0),
+        dropout=0.0,
+        arch=config.get("arch", "lstm_only"),
+        gaussian_nll=config.get("gaussian_nll", False),
     )
     lm = CNNLightningModule.load_from_checkpoint(
         ckpt, model=model, map_location="cpu", strict=True
@@ -90,8 +95,8 @@ def test_kfold_predictions_not_identical():
     with open(cfg0) as f:
         config = yaml.safe_load(f)
 
-    n_vars  = config["in_channels"]
-    window  = config.get("window_size", 60)
+    n_vars = config["in_channels"]
+    window = config.get("window_size", 60)
     t_feats = config.get("temporal_features", 0)
 
     torch.manual_seed(0)

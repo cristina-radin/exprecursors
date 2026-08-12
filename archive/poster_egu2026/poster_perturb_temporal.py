@@ -24,44 +24,52 @@ Usage:
 
 import argparse
 import sys
-import numpy as np
+
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
 from datamodule import LazyDataModule
 from model import CNNLightningModule, CNNLSTMModel
+
 from xai.utils import load_config
 
-FONTSIZE  = 18
+FONTSIZE = 18
 TITLESIZE = 20
-TICKSIZE  = 14
+TICKSIZE = 14
 
 VAR_LABELS = {
     "ptho_bot": "T$_{bottom}$",
-    "to_anom":  "SST anom.",
-    "u10":      "U-wind",
-    "v10":      "V-wind",
-    "msl":      "SLP",
-    "ssr":      "Solar rad.",
+    "to_anom": "SST anom.",
+    "u10": "U-wind",
+    "v10": "V-wind",
+    "msl": "SLP",
+    "ssr": "Solar rad.",
 }
 
 BINS = [
-    ("Early\n(day −60–41)",  slice(0,  20)),
-    ("Mid\n(day −40–21)",    slice(20, 40)),
-    ("Recent\n(day −20–1)",  slice(40, 60)),
+    ("Early\n(day −60–41)", slice(0, 20)),
+    ("Mid\n(day −40–21)", slice(20, 40)),
+    ("Recent\n(day −20–1)", slice(40, 60)),
 ]
 BIN_COLORS = ["#2166ac", "#92c5de", "#d7191c"]
 
 
 def best_checkpoint(exp_dir):
     ckpts = list((exp_dir / "checkpoints").glob("*.ckpt"))
+
     def val_loss(p):
-        try:   return float(str(p).split("val_loss=")[1].replace(".ckpt", ""))
-        except: return float("inf")
+        try:
+            return float(str(p).split("val_loss=")[1].replace(".ckpt", ""))
+        except:
+            return float("inf")
+
     return min(ckpts, key=val_loss)
 
 
@@ -104,22 +112,22 @@ def predict(lm, xs, xt, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_dirs", nargs="+", required=True)
-    parser.add_argument("--npz",      required=True)
-    parser.add_argument("--output",   default="poster_figures/fig_perturb_temporal.png")
+    parser.add_argument("--npz", required=True)
+    parser.add_argument("--output", default="poster_figures/fig_perturb_temporal.png")
     parser.add_argument("--n_events", type=int, default=50)
-    parser.add_argument("--no_cuda",  action="store_true")
+    parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()
 
-    device   = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     exp_dirs = [Path(d) for d in args.exp_dirs]
 
-    config0   = load_config(str(exp_dirs[0] / "config.yaml"))
+    config0 = load_config(str(exp_dirs[0] / "config.yaml"))
     variables = config0["variables"]
-    n_vars    = len(variables)
-    window    = config0.get("window_size", 60)
+    n_vars = len(variables)
+    window = config0.get("window_size", 60)
 
-    d          = np.load(args.npz, allow_pickle=True)
-    ens_pred   = d["ens_full"]
+    d = np.load(args.npz, allow_pickle=True)
+    ens_pred = d["ens_full"]
     idx_events = sep_indices(ens_pred, args.n_events, sep=60)
     print(f"Selected {len(idx_events)} top events")
 
@@ -130,12 +138,12 @@ def main():
     counts = 0
 
     for exp_dir in exp_dirs:
-        config  = load_config(str(exp_dir / "config.yaml"))
-        lm      = load_model(best_checkpoint(exp_dir), config, device)
-        dm      = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
+        config = load_config(str(exp_dir / "config.yaml"))
+        lm = load_model(best_checkpoint(exp_dir), config, device)
+        dm = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
         dm.setup()
         full_ds = dm.train_dataset.dataset
-        seed    = config.get("seed", "?")
+        seed = config.get("seed", "?")
         print(f"  Seed={seed}...")
 
         for k, idx in enumerate(idx_events):
@@ -168,15 +176,20 @@ def main():
     # ------------------------------------------------------------------ #
     # Figure 1: grouped bar chart (bins × variables)
     # ------------------------------------------------------------------ #
-    x     = np.arange(n_vars)
+    x = np.arange(n_vars)
     width = 0.25
     fig, ax = plt.subplots(figsize=(11, 6))
 
     for b, (bin_name, _) in enumerate(BINS):
         offset = (b - 1) * width
-        ax.bar(x + offset, degradation_bins[b], width,
-               label=bin_name.replace("\n", " "),
-               color=BIN_COLORS[b], alpha=0.85)
+        ax.bar(
+            x + offset,
+            degradation_bins[b],
+            width,
+            label=bin_name.replace("\n", " "),
+            color=BIN_COLORS[b],
+            alpha=0.85,
+        )
 
     ax.axhline(0, color="k", linewidth=0.8, linestyle="--")
     ax.set_xticks(x)
@@ -189,7 +202,8 @@ def main():
     ax.set_title(
         f"Temporal perturbation importance — prediction degradation\n"
         f"Ensemble of {len(exp_dirs)} seeds  ·  top-{len(idx_events)} MHW events  ·  7-day lead",
-        fontsize=TITLESIZE, fontweight="bold",
+        fontsize=TITLESIZE,
+        fontweight="bold",
     )
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -201,20 +215,27 @@ def main():
     # ------------------------------------------------------------------ #
     # Figure 2: per-day line plot for each variable
     # ------------------------------------------------------------------ #
-    days = np.arange(-window, 0)   # -60 … -1 relative to last input day
+    days = np.arange(-window, 0)  # -60 … -1 relative to last input day
 
     fig2, ax2 = plt.subplots(figsize=(12, 5))
     colors_vars = ["#d73027", "#4575b4", "#74add1", "#f46d43", "#fee090"]
     for v, var in enumerate(variables):
         color = colors_vars[v % len(colors_vars)]
-        ax2.plot(days, degradation_days[:, v],
-                 label=VAR_LABELS.get(var, var),
-                 color=color, linewidth=1.8, alpha=0.85)
+        ax2.plot(
+            days,
+            degradation_days[:, v],
+            label=VAR_LABELS.get(var, var),
+            color=color,
+            linewidth=1.8,
+            alpha=0.85,
+        )
 
     # Shade the 3 bins
-    bin_edges = [(-60, -41, BIN_COLORS[0], 0.08),
-                 (-40, -21, BIN_COLORS[1], 0.08),
-                 (-20,  -1, BIN_COLORS[2], 0.08)]
+    bin_edges = [
+        (-60, -41, BIN_COLORS[0], 0.08),
+        (-40, -21, BIN_COLORS[1], 0.08),
+        (-20, -1, BIN_COLORS[2], 0.08),
+    ]
     for xmin, xmax, c, a in bin_edges:
         ax2.axvspan(xmin, xmax, color=c, alpha=a)
 
@@ -227,7 +248,8 @@ def main():
     ax2.set_title(
         f"Per-day perturbation importance\n"
         f"Ensemble of {len(exp_dirs)} seeds  ·  top-{len(idx_events)} MHW events  ·  7-day lead",
-        fontsize=TITLESIZE, fontweight="bold",
+        fontsize=TITLESIZE,
+        fontweight="bold",
     )
     out2 = out.parent / (out.stem + "_perday.png")
     plt.tight_layout()

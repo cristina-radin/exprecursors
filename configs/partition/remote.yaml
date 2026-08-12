@@ -1,7 +1,7 @@
 # Remote-only partition config — fold and seed passed as CLI args
 # Usage: python scripts/train_partition.py --config configs/partition/remote.yaml --mode remote_only --fold 0
 
-data_dir: /p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc
+data_dir: ""  # set via MHW_DATA_FILE env var or pass --data_dir at runtime
 variables:
   - ptho_bot
   - u10
@@ -37,4 +37,4 @@ max_epochs: 1000
 window_size: 60
 lead_time: 7
 
-output_dir: /p/project1/hai_1127/radin1/exprecursors/experiments/partition/TbotAtm_remote_seed42_fold0
+output_dir: ""  # set at runtime; default: $MHW_EXPERIMENTS_DIR/<experiment_name>

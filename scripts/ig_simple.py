@@ -8,21 +8,26 @@ Usage:
   python eval/ig_simple.py --checkpoint <ckpt> --config <yaml> --output <dir>
 """
 
-import argparse, sys, os
+import argparse
+import sys
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 import torch
-import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import matplotlib.pyplot as plt
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.dataset import MHWDataset
 from src.models.cnn_lstm import CNNLSTMModel
+from src.utils.paths import (
+    DATA_FILE as DATA_FILE_ENV,
+)
 
 
 def integrated_gradients(model, x_spatial, x_temporal, steps=50):
@@ -31,9 +36,9 @@ def integrated_gradients(model, x_spatial, x_temporal, steps=50):
 
     alphas = torch.linspace(0, 1, steps, device=x_spatial.device).view(-1, 1, 1, 1, 1)
     interp_s = baseline_s + alphas * (x_spatial - baseline_s)
-    interp_t = baseline_t.unsqueeze(0).expand(steps, -1, -1, -1) + \
-               torch.linspace(0, 1, steps, device=x_temporal.device).view(-1, 1, 1, 1) * \
-               (x_temporal - baseline_t).unsqueeze(0)
+    interp_t = baseline_t.unsqueeze(0).expand(steps, -1, -1, -1) + torch.linspace(
+        0, 1, steps, device=x_temporal.device
+    ).view(-1, 1, 1, 1) * (x_temporal - baseline_t).unsqueeze(0)
 
     B = x_spatial.shape[0]
     interp_s = interp_s.view(steps * B, *x_spatial.shape[1:]).requires_grad_(True)
@@ -53,9 +58,9 @@ def integrated_gradients(model, x_spatial, x_temporal, steps=50):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
-    parser.add_argument("--config",     required=True)
-    parser.add_argument("--output",     required=True)
-    parser.add_argument("--n_steps",    type=int, default=50)
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--n_steps", type=int, default=50)
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -70,10 +75,12 @@ def main():
     # Dataset
     ds = MHWDataset(args.config)
     total = len(ds)
-    target_years = np.array([int(ds.years[i + ds.window_size - 1]) for i in range(total)])
+    target_years = np.array(
+        [int(ds.years[i + ds.window_size - 1]) for i in range(total)]
+    )
     unique_years = np.sort(np.unique(target_years))
     n_folds = cfg.get("n_folds", 5)
-    fold    = cfg.get("fold", 0)
+    fold = cfg.get("fold", 0)
     rng = np.random.default_rng(0)
     shuffled = rng.permutation(unique_years)
     fold_groups = np.array_split(shuffled, n_folds)
@@ -84,7 +91,7 @@ def main():
     # Model
     arch = cfg.get("arch", "lstm_attention")
     gnll = cfg.get("gaussian_nll", False)
-    tf   = cfg.get("temporal_features", 0)
+    tf = cfg.get("temporal_features", 0)
     model = CNNLSTMModel(
         in_channels=len(cfg["variables"]),
         arch=arch,
@@ -102,28 +109,29 @@ def main():
     n_vars = len(variables)
     H, W = ds[0][0].shape[-2], ds[0][0].shape[-1]
 
-    sum_ig = torch.zeros(n_vars, H, W)   # mean over time and samples
-    count  = 0
+    sum_ig = torch.zeros(n_vars, H, W)  # mean over time and samples
+    count = 0
 
     for idx in test_idx:
         xs, xt, _ = ds[idx]
-        xs = xs.unsqueeze(0).float().to(device)   # (1, T, C, H, W)
-        xt = xt.unsqueeze(0).float().to(device)   # (1, T, tf)
+        xs = xs.unsqueeze(0).float().to(device)  # (1, T, C, H, W)
+        xt = xt.unsqueeze(0).float().to(device)  # (1, T, tf)
 
         ig = integrated_gradients(model, xs, xt, steps=args.n_steps)  # (1, T, C, H, W)
         # Mean over time dimension → (C, H, W)
         sum_ig += ig[0].mean(0).cpu()
-        count  += 1
+        count += 1
         if count % 50 == 0:
             print(f"  Processed {count}/{len(test_idx)}")
 
-    mean_ig = (sum_ig / count).numpy()   # (C, H, W)
+    mean_ig = (sum_ig / count).numpy()  # (C, H, W)
     np.save(out_dir / "ig_simple_all.npy", mean_ig)
     print(f"Saved ig_simple_all.npy  shape={mean_ig.shape}")
 
     # Load grid for plotting
     import xarray as xr
-    nc_file = "/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc"
+
+    nc_file = str(DATA_FILE_ENV)
     nc = xr.open_dataset(nc_file)
     lats = nc.lat.values
     lons = nc.lon.values
@@ -135,10 +143,17 @@ def main():
         ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
         data = mean_ig[i]
         vmax = np.percentile(np.abs(data), 98)
-        im = ax.pcolormesh(lons, lats, data, cmap="RdBu_r",
-                           vmin=-vmax, vmax=vmax, transform=ccrs.PlateCarree())
+        im = ax.pcolormesh(
+            lons,
+            lats,
+            data,
+            cmap="RdBu_r",
+            vmin=-vmax,
+            vmax=vmax,
+            transform=ccrs.PlateCarree(),
+        )
         ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
-        ax.add_feature(cfeature.BORDERS,   linewidth=0.3)
+        ax.add_feature(cfeature.BORDERS, linewidth=0.3)
         ax.set_title(f"Mean signed IG — {var}  (n={count} test samples)", fontsize=12)
         plt.colorbar(im, ax=ax, shrink=0.7, label="Mean signed IG")
         plt.tight_layout()

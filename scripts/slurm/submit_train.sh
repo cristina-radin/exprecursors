@@ -1,5 +1,14 @@
 #!/bin/bash
-#SBATCH --account=hai_1127
+# Submit partition training (remote_only or local_only), all 5 folds.
+#
+# Usage:
+#   export SLURM_ACCOUNT=your_account
+#   export SLURM_MAIL=your@email.com
+#   source .env          # sets MHW_DATA_FILE, MHW_EXPERIMENTS_DIR, etc.
+#   sbatch --export=ALL,MODE=remote_only scripts/slurm/submit_train.sh
+#   sbatch --export=ALL,MODE=local_only  scripts/slurm/submit_train.sh
+
+#SBATCH --account=${SLURM_ACCOUNT:-your_account}
 #SBATCH --partition=booster
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -8,29 +17,26 @@
 #SBATCH --time=04:00:00
 #SBATCH --job-name=partition
 #SBATCH --array=0-4
-#SBATCH --output=/p/project1/hai_1127/radin1/exprecursors/partition/partition-${MODE}-f%a-%j.out
-#SBATCH --error=/p/project1/hai_1127/radin1/exprecursors/partition/partition-${MODE}-f%a-%j.err
+#SBATCH --output=slurm-partition-%x-%j.out
+#SBATCH --error=slurm-partition-%x-%j.err
 #SBATCH --mail-type=FAIL
-#SBATCH --mail-user=cristina.radin@uni-hamburg.de
-
-# Submit with:
-#   sbatch --export=MODE=remote_only partition/submit_partition.sh
-#   sbatch --export=MODE=local_only  partition/submit_partition.sh
+#SBATCH --mail-user=${SLURM_MAIL:-}
 
 module --force purge
 module load Stages/2025
 module load GCCcore/.13.3.0
 module load Python/3.12.3
 
-source /p/project1/hai_1127/radin1/exprecursors/venv/bin/activate
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${REPO_DIR}/venv/bin/activate"
+source "${REPO_DIR}/.env" 2>/dev/null || true
 
-CFG="/p/project1/hai_1127/radin1/exprecursors/partition/configs/${MODE//_only/}/fold${SLURM_ARRAY_TASK_ID}.yaml"
+CFG="${REPO_DIR}/configs/partition/${MODE//_only/}/fold${SLURM_ARRAY_TASK_ID}.yaml"
 
 echo "Mode: ${MODE}  Fold: ${SLURM_ARRAY_TASK_ID}  Config: ${CFG}"
 echo "Start: $(date)"
 
-cd /p/project1/hai_1127/radin1/exprecursors
-
-python -u partition/train_partition.py --config "${CFG}" --mode "${MODE}"
+cd "${REPO_DIR}"
+python -u scripts/train_partition.py --config "${CFG}" --mode "${MODE}"
 
 echo "End: $(date)"

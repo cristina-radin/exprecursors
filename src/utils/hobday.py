@@ -13,7 +13,7 @@ import numpy as np
 import xarray as xr
 from scipy.ndimage import uniform_filter1d
 
-CLIM_FILE = "/p/project1/hai_1127/inputs/sst_anomaly/sst_climatology_doy.nc"
+from src.utils.paths import CLIM_FILE
 
 _NS_LAT_SLICE = slice(50.0, 63.0)
 _NS_LON_SLICE = slice(-5.0, 13.0)
@@ -22,12 +22,11 @@ MIN_DURATION = 5
 MAX_GAP = 2
 
 
-def load_ns_p90(smooth_days: int = 31, clim_file: str = CLIM_FILE) -> np.ndarray:
+def load_ns_p90(smooth_days: int = 31, clim_file=CLIM_FILE) -> np.ndarray:
     """Load and return NS-mean P90 threshold, shape (365,)."""
     ds = xr.open_dataset(clim_file)
     p90 = (
-        ds.p90_thresh
-        .sel(lat=_NS_LAT_SLICE, lon=_NS_LON_SLICE)
+        ds.p90_thresh.sel(lat=_NS_LAT_SLICE, lon=_NS_LON_SLICE)
         .mean(dim=["lat", "lon"], skipna=True)
         .values
     )
@@ -35,9 +34,9 @@ def load_ns_p90(smooth_days: int = 31, clim_file: str = CLIM_FILE) -> np.ndarray
     return uniform_filter1d(p90, size=smooth_days, mode="wrap")
 
 
-def apply_hobday(exceedance: np.ndarray,
-                 min_dur: int = MIN_DURATION,
-                 max_gap: int = MAX_GAP) -> np.ndarray:
+def apply_hobday(
+    exceedance: np.ndarray, min_dur: int = MIN_DURATION, max_gap: int = MAX_GAP
+) -> np.ndarray:
     """Apply Hobday gap-closure + minimum-duration criteria to a 1D bool array."""
     mhw = exceedance.copy().astype(bool)
     n = len(mhw)
@@ -76,8 +75,9 @@ def apply_hobday(exceedance: np.ndarray,
     return mhw
 
 
-def mhw_phase_labels(trues: np.ndarray, doys: np.ndarray,
-                     p90_ns: np.ndarray) -> np.ndarray:
+def mhw_phase_labels(
+    trues: np.ndarray, doys: np.ndarray, p90_ns: np.ndarray
+) -> np.ndarray:
     """
     Classify each timestep into:  0=no_mhw, 1=onset, 2=mid_event.
 

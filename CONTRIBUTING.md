@@ -14,8 +14,8 @@ Load the HPC environment and activate the project venv:
 
 ```bash
 module --force purge && module load Stages/2025 GCCcore/.13.3.0 Python/3.12.3
-source /p/project1/hai_1127/radin1/exprecursors/venv/bin/activate
-cd /p/project1/hai_1127/radin1/exprecursors
+source /path/to/repo/venv/bin/activate
+cd /path/to/repo
 ```
 
 Then install the pre-commit hooks:
@@ -114,7 +114,7 @@ Do not use `land_mask` directly as a boolean without inverting.
 One data file, no exceptions:
 
 ```
-/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc
+$MHW_DATA_FILE  (see .env.example)
 ```
 
 Never use any file ending in `_OLD` or `merged_daily_deepSST.nc`.
@@ -136,7 +136,7 @@ If a hook fails, fix the underlying issue rather than bypassing the hook.
 If `detect-secrets` flags a false positive (e.g. a hardcoded HPC path), allowlist inline:
 
 ```python
-DATA = "/p/project1/hai_1127/inputs/daily/..."  # pragma: allowlist secret
+DATA = "/some/sensitive/path/data.nc"  # pragma: allowlist secret
 ```
 
 
@@ -159,8 +159,8 @@ New behaviour must ship with a test.
 
 ## SLURM
 
-Account: `hai_1127`  Partition: `booster`
-Mail on FAIL: `cristina.radin@uni-hamburg.de` — never the gmail address.
+Set `SLURM_ACCOUNT` and `SLURM_MAIL` env vars before submitting (see `.env.example`).
+Partition: `booster`.
 
 Two rules before every submission:
 

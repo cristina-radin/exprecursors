@@ -6,11 +6,12 @@ Outputs:
   ig_spatial_<var>.png        — spatial map per variable (mean |attr| over time)
 """
 
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from matplotlib.patches import Patch
 
 
 def _integrated_gradients(lightning_module, x_spatial, x_temporal, n_steps=50):
@@ -18,10 +19,10 @@ def _integrated_gradients(lightning_module, x_spatial, x_temporal, n_steps=50):
     Returns attributions: (window, n_vars, lat, lon) on CPU.
     """
     baseline = torch.zeros_like(x_spatial)
-    grads    = []
+    grads = []
 
     for step in range(n_steps):
-        alpha  = step / (n_steps - 1)
+        alpha = step / (n_steps - 1)
         interp = (baseline + alpha * (x_spatial - baseline)).requires_grad_(True)
         prev = torch.backends.cudnn.enabled
         torch.backends.cudnn.enabled = False
@@ -30,9 +31,11 @@ def _integrated_gradients(lightning_module, x_spatial, x_temporal, n_steps=50):
         )
         pred.squeeze().backward()
         torch.backends.cudnn.enabled = prev
-        grads.append(interp.grad.detach().squeeze(0).clone())   # (window, n_vars, lat, lon)
+        grads.append(
+            interp.grad.detach().squeeze(0).clone()
+        )  # (window, n_vars, lat, lon)
 
-    avg_grads    = torch.stack(grads).mean(dim=0)
+    avg_grads = torch.stack(grads).mean(dim=0)
     attributions = (x_spatial.squeeze(0) - baseline.squeeze(0)) * avg_grads
     return attributions.cpu()
 
@@ -53,8 +56,8 @@ def _integrated_gradients_full(lightning_module, x_spatial, x_temporal, n_steps=
     torch.backends.cudnn.enabled = False
 
     for step in range(n_steps):
-        alpha    = step / (n_steps - 1)
-        interp_s = (baseline_s + alpha * (x_spatial  - baseline_s)).requires_grad_(True)
+        alpha = step / (n_steps - 1)
+        interp_s = (baseline_s + alpha * (x_spatial - baseline_s)).requires_grad_(True)
         interp_t = (baseline_t + alpha * (x_temporal - baseline_t)).requires_grad_(True)
 
         pred, _ = lightning_module.model.forward_with_attention(
@@ -70,28 +73,29 @@ def _integrated_gradients_full(lightning_module, x_spatial, x_temporal, n_steps=
     avg_grads_s = torch.stack(grads_s).mean(dim=0)
     avg_grads_t = torch.stack(grads_t).mean(dim=0)
 
-    attr_spatial  = (x_spatial.squeeze(0)  - baseline_s.squeeze(0)) * avg_grads_s
+    attr_spatial = (x_spatial.squeeze(0) - baseline_s.squeeze(0)) * avg_grads_s
     attr_temporal = (x_temporal.squeeze(0) - baseline_t.squeeze(0)) * avg_grads_t
 
     return attr_spatial.cpu(), attr_temporal.cpu()
 
 
-def analyze_integrated_gradients(lightning_module, test_dataset, output_dir,
-                                  n_samples, config, lat, lon):
-    device     = next(lightning_module.parameters()).device
-    variables  = config["variables"]
+def analyze_integrated_gradients(
+    lightning_module, test_dataset, output_dir, n_samples, config, lat, lon
+):
+    device = next(lightning_module.parameters()).device
+    variables = config["variables"]
     ocean_vars = set(config.get("ocean_variables", variables))
     output_dir = Path(output_dir)
-    n_vars     = len(variables)
+    n_vars = len(variables)
 
-    rng      = np.random.default_rng(42)
-    idx_list = rng.choice(len(test_dataset),
-                          size=min(n_samples, len(test_dataset)),
-                          replace=False)
+    rng = np.random.default_rng(42)
+    idx_list = rng.choice(
+        len(test_dataset), size=min(n_samples, len(test_dataset)), replace=False
+    )
 
     spatial_accum = np.zeros((n_vars, len(lat), len(lon)))
-    global_accum  = np.zeros(n_vars)
-    count         = 0
+    global_accum = np.zeros(n_vars)
+    count = 0
 
     for idx in idx_list:
         xs, xt, _ = test_dataset[int(idx)]
@@ -100,15 +104,15 @@ def analyze_integrated_gradients(lightning_module, test_dataset, output_dir,
             xs.unsqueeze(0).to(device),
             xt.unsqueeze(0).to(device),
         )
-        abs_attrs       = attrs.abs()
-        spatial_accum  += abs_attrs.mean(dim=0).numpy()       # mean over time
-        global_accum   += abs_attrs.mean(dim=(0, 2, 3)).numpy()  # mean over time+space
-        count          += 1
+        abs_attrs = attrs.abs()
+        spatial_accum += abs_attrs.mean(dim=0).numpy()  # mean over time
+        global_accum += abs_attrs.mean(dim=(0, 2, 3)).numpy()  # mean over time+space
+        count += 1
         print(f"  IG {count}/{len(idx_list)}", end="\r")
 
     print()
     spatial_accum /= count
-    global_accum  /= count
+    global_accum /= count
 
     # --- Bar chart ---
     colors = ["tomato" if v in ocean_vars else "steelblue" for v in variables]
@@ -116,10 +120,13 @@ def analyze_integrated_gradients(lightning_module, test_dataset, output_dir,
     ax.barh(variables, global_accum, color=colors)
     ax.set_xlabel("Mean |attribution| (normalised units)")
     ax.set_title("Variable importance — Integrated Gradients")
-    ax.legend(handles=[
-        Patch(color="tomato",    label="ocean variable"),
-        Patch(color="steelblue", label="atmospheric variable"),
-    ], fontsize=8)
+    ax.legend(
+        handles=[
+            Patch(color="tomato", label="ocean variable"),
+            Patch(color="steelblue", label="atmospheric variable"),
+        ],
+        fontsize=8,
+    )
     plt.tight_layout()
     plt.savefig(output_dir / "ig_variable_importance.png", dpi=150, bbox_inches="tight")
     plt.close()
@@ -133,9 +140,11 @@ def analyze_integrated_gradients(lightning_module, test_dataset, output_dir,
             data = np.where(data == 0, np.nan, data)
 
         fig, ax = plt.subplots(figsize=(8, 4))
-        im = ax.imshow(data, origin="lower", extent=extent,
-                       cmap="YlOrRd", aspect="auto")
-        ax.set_xlabel("lon"); ax.set_ylabel("lat")
+        im = ax.imshow(
+            data, origin="lower", extent=extent, cmap="YlOrRd", aspect="auto"
+        )
+        ax.set_xlabel("lon")
+        ax.set_ylabel("lat")
         ax.set_title(f"IG spatial attribution — {var}")
         plt.colorbar(im, ax=ax, label="|attribution|")
         plt.tight_layout()
@@ -145,5 +154,5 @@ def analyze_integrated_gradients(lightning_module, test_dataset, output_dir,
 
     return {
         "global_importance": dict(zip(variables, global_accum)),
-        "spatial_maps":      spatial_accum,
+        "spatial_maps": spatial_accum,
     }

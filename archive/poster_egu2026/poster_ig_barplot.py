@@ -12,59 +12,63 @@ Usage:
 
 import argparse
 import sys
-import numpy as np
+
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-FONTSIZE  = 22
+FONTSIZE = 22
 TITLESIZE = 24
-TICKSIZE  = 18
+TICKSIZE = 18
 
 VAR_LABELS = {
     "ptho_bot": "T$_{bot}$\n(subsurface)",
-    "to_anom":  "SST\nanomaly",
-    "u10":      "U-wind\n(10m)",
-    "v10":      "V-wind\n(10m)",
-    "msl":      "Sea-level\npressure",
-    "ssr":      "Solar\nradiation",
+    "to_anom": "SST\nanomaly",
+    "u10": "U-wind\n(10m)",
+    "v10": "V-wind\n(10m)",
+    "msl": "Sea-level\npressure",
+    "ssr": "Solar\nradiation",
 }
 
 VAR_COLORS = {
-    "ptho_bot": "#d7191c",   # red  — ocean
-    "to_anom":  "#e85d04",   # orange — ocean
-    "u10":      "#2c7bb6",   # blue — atm
-    "v10":      "#4dac26",   # green — atm
-    "msl":      "#7b3294",   # purple — atm
-    "ssr":      "#d01c8b",   # pink — atm
+    "ptho_bot": "#d7191c",  # red  — ocean
+    "to_anom": "#e85d04",  # orange — ocean
+    "u10": "#2c7bb6",  # blue — atm
+    "v10": "#4dac26",  # green — atm
+    "msl": "#7b3294",  # purple — atm
+    "ssr": "#d01c8b",  # pink — atm
 }
 DEFAULT_COLORS = ["#d7191c", "#2c7bb6", "#4dac26", "#7b3294", "#d01c8b", "#f4a582"]
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--npz_ig", required=True,
-                        help="ig_var_importance.npz from poster_xai_map.py")
+    parser.add_argument(
+        "--npz_ig", required=True, help="ig_var_importance.npz from poster_xai_map.py"
+    )
     parser.add_argument("--output", default="poster_figures/fig_ig_barplot_poster.png")
     args = parser.parse_args()
 
-    d         = np.load(args.npz_ig, allow_pickle=True)
-    var_means = d["var_means"]           # (n_seeds, n_vars)
+    d = np.load(args.npz_ig, allow_pickle=True)
+    var_means = d["var_means"]  # (n_seeds, n_vars)
     variables = list(d["variables"])
 
-    means = var_means.mean(axis=0)       # (n_vars,)
-    stds  = var_means.std(axis=0)        # (n_vars,) — across seeds
+    means = var_means.mean(axis=0)  # (n_vars,)
+    stds = var_means.std(axis=0)  # (n_vars,) — across seeds
 
     # Sort by importance descending
     order = np.argsort(means)[::-1]
     variables_sorted = [variables[i] for i in order]
-    means_sorted     = means[order]
-    stds_sorted      = stds[order]
-    colors_sorted    = [VAR_COLORS.get(v, "#888888") for v in variables_sorted]
-    labels_sorted    = [VAR_LABELS.get(v, v) for v in variables_sorted]
+    means_sorted = means[order]
+    stds_sorted = stds[order]
+    colors_sorted = [VAR_COLORS.get(v, "#888888") for v in variables_sorted]
+    labels_sorted = [VAR_LABELS.get(v, v) for v in variables_sorted]
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -83,7 +87,7 @@ def main():
     ax.set_yticklabels(labels_sorted, fontsize=TICKSIZE)
     ax.set_xlabel("Mean |IG attribution|", fontsize=FONTSIZE)
     ax.tick_params(axis="x", labelsize=TICKSIZE - 2)
-    ax.invert_yaxis()   # highest bar on top
+    ax.invert_yaxis()  # highest bar on top
     ax.grid(axis="x", alpha=0.3, lw=0.8)
     ax.set_axisbelow(True)
 
@@ -91,7 +95,9 @@ def main():
     ax.set_title(
         f"Variable importance — Integrated Gradients\n"
         f"Ensemble of {n_seeds} seeds  ·  top-50 MHW events  ·  7-day lead",
-        fontsize=TITLESIZE, fontweight="bold", pad=10,
+        fontsize=TITLESIZE,
+        fontweight="bold",
+        pad=10,
     )
 
     plt.tight_layout()

@@ -6,7 +6,6 @@ needed — the invariant is on the year assignment math, not the full dataset.
 """
 
 import numpy as np
-import pytest
 
 N_FOLDS = 5
 
@@ -27,8 +26,8 @@ def _block_year_split(unique_years, train_ratio=0.7, val_ratio=0.15, seed=42):
     n_val = int(val_ratio * n)
     return (
         set(shuffled[:n_train].tolist()),
-        set(shuffled[n_train:n_train + n_val].tolist()),
-        set(shuffled[n_train + n_val:].tolist()),
+        set(shuffled[n_train : n_train + n_val].tolist()),
+        set(shuffled[n_train + n_val :].tolist()),
     )
 
 
@@ -62,9 +61,9 @@ def test_kfold_deterministic():
 def test_block_year_sets_disjoint():
     """Train, val, test year sets must be mutually disjoint."""
     train, val, test = _block_year_split(UNIQUE_YEARS)
-    assert not (train & val),  f"train ∩ val = {train & val}"
+    assert not (train & val), f"train ∩ val = {train & val}"
     assert not (train & test), f"train ∩ test = {train & test}"
-    assert not (val & test),   f"val ∩ test = {val & test}"
+    assert not (val & test), f"val ∩ test = {val & test}"
 
 
 def test_block_year_covers_all_years():

@@ -22,44 +22,52 @@ Usage:
 
 import argparse
 import sys
+
+import matplotlib
 import numpy as np
 import xarray as xr
-import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
 from datamodule import LazyDataModule
 from model import CNNLightningModule, CNNLSTMModel
+
 from xai.utils import load_config
 
-FONTSIZE  = 18
+FONTSIZE = 18
 TITLESIZE = 20
-TICKSIZE  = 14
+TICKSIZE = 14
 
 BINS = [
-    ("Early\n(day −60–41)",  slice(0,  20)),
-    ("Mid\n(day −40–21)",    slice(20, 40)),
-    ("Recent\n(day −20–1)",  slice(40, 60)),
+    ("Early\n(day −60–41)", slice(0, 20)),
+    ("Mid\n(day −40–21)", slice(20, 40)),
+    ("Recent\n(day −20–1)", slice(40, 60)),
 ]
 BIN_COLORS = ["#2166ac", "#92c5de", "#d7191c"]
 
 # Spatial regions
 REGIONS = {
-    "Gulf Stream": dict(lat_min=30,   lat_max=50,   lon_min=-80, lon_max=-40),
-    "North Sea":   dict(lat_min=51,   lat_max=62.5, lon_min=-5.2, lon_max=13.2),
+    "Gulf Stream": dict(lat_min=30, lat_max=50, lon_min=-80, lon_max=-40),
+    "North Sea": dict(lat_min=51, lat_max=62.5, lon_min=-5.2, lon_max=13.2),
 }
 REGION_HATCHES = ["", "///"]
-REGION_ALPHA   = [0.9, 0.6]
+REGION_ALPHA = [0.9, 0.6]
 
 
 def best_checkpoint(exp_dir):
     ckpts = list((exp_dir / "checkpoints").glob("*.ckpt"))
+
     def val_loss(p):
-        try:   return float(str(p).split("val_loss=")[1].replace(".ckpt", ""))
-        except: return float("inf")
+        try:
+            return float(str(p).split("val_loss=")[1].replace(".ckpt", ""))
+        except:
+            return float("inf")
+
     return min(ckpts, key=val_loss)
 
 
@@ -94,7 +102,7 @@ def make_spatial_mask(lat, lon, lat_min, lat_max, lon_min, lon_max):
     """Boolean mask (n_lat, n_lon) — True where pixels are inside the box."""
     lat_ok = (lat >= lat_min) & (lat <= lat_max)
     lon_ok = (lon >= lon_min) & (lon <= lon_max)
-    return lat_ok[:, None] & lon_ok[None, :]   # (n_lat, n_lon)
+    return lat_ok[:, None] & lon_ok[None, :]  # (n_lat, n_lon)
 
 
 @torch.no_grad()
@@ -109,24 +117,26 @@ def predict(lm, xs, xt, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_dirs", nargs="+", required=True)
-    parser.add_argument("--npz",      required=True)
-    parser.add_argument("--output",   default="poster_figures/fig_perturb_spatial_temporal.png")
+    parser.add_argument("--npz", required=True)
+    parser.add_argument(
+        "--output", default="poster_figures/fig_perturb_spatial_temporal.png"
+    )
     parser.add_argument("--n_events", type=int, default=50)
-    parser.add_argument("--no_cuda",  action="store_true")
+    parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()
 
-    device   = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     exp_dirs = [Path(d) for d in args.exp_dirs]
 
-    config0   = load_config(str(exp_dirs[0] / "config.yaml"))
+    config0 = load_config(str(exp_dirs[0] / "config.yaml"))
     variables = config0["variables"]
     if "ptho_bot" not in variables:
         raise ValueError("ptho_bot not in variables — nothing to do")
     tbot_idx = variables.index("ptho_bot")
 
     ds_xr = xr.open_dataset(config0["data_dir"])
-    lat   = ds_xr.lat.values
-    lon   = ds_xr.lon.values
+    lat = ds_xr.lat.values
+    lon = ds_xr.lon.values
     ds_xr.close()
 
     # Build spatial masks
@@ -137,25 +147,25 @@ def main():
         n_pix = mask.sum()
         print(f"  {name}: {n_pix} pixels within box")
 
-    d          = np.load(args.npz, allow_pickle=True)
-    ens_pred   = d["ens_full"]
+    d = np.load(args.npz, allow_pickle=True)
+    ens_pred = d["ens_full"]
     idx_events = sep_indices(ens_pred, args.n_events, sep=60)
     print(f"Selected {len(idx_events)} top events")
 
     # degradation[region][bin] = mean pred drop
     region_names = list(REGIONS.keys())
-    n_bins   = len(BINS)
+    n_bins = len(BINS)
     n_regions = len(region_names)
     degradation = np.zeros((n_regions, n_bins))
     counts = 0
 
     for exp_dir in exp_dirs:
-        config  = load_config(str(exp_dir / "config.yaml"))
-        lm      = load_model(best_checkpoint(exp_dir), config, device)
-        dm      = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
+        config = load_config(str(exp_dir / "config.yaml"))
+        lm = load_model(best_checkpoint(exp_dir), config, device)
+        dm = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
         dm.setup()
         full_ds = dm.train_dataset.dataset
-        seed    = config.get("seed", "?")
+        seed = config.get("seed", "?")
         print(f"  Seed={seed}...")
 
         for k, idx in enumerate(idx_events):
@@ -163,7 +173,7 @@ def main():
             pred_full = predict(lm, xs, xt, device)
 
             for r, rname in enumerate(region_names):
-                mask = region_masks[rname]   # (n_lat, n_lon)
+                mask = region_masks[rname]  # (n_lat, n_lon)
                 for b, (_, sl) in enumerate(BINS):
                     xs_masked = xs.clone()
                     # Zero out tbot_idx in time bin sl, only within spatial mask
@@ -183,7 +193,7 @@ def main():
     # ------------------------------------------------------------------ #
     # Figure: grouped bars — x=bins, groups=regions, for T_bottom
     # ------------------------------------------------------------------ #
-    x     = np.arange(n_bins)
+    x = np.arange(n_bins)
     width = 0.35
     bin_labels = [name.replace("\n", " ") for name, _ in BINS]
 
@@ -191,12 +201,16 @@ def main():
 
     for r, rname in enumerate(region_names):
         offset = (r - 0.5) * width
-        bars = ax.bar(x + offset, degradation[r], width,
-                      label=rname,
-                      color=[BIN_COLORS[b] for b in range(n_bins)],
-                      alpha=REGION_ALPHA[r],
-                      hatch=REGION_HATCHES[r],
-                      edgecolor="white" if r == 0 else "gray")
+        bars = ax.bar(
+            x + offset,
+            degradation[r],
+            width,
+            label=rname,
+            color=[BIN_COLORS[b] for b in range(n_bins)],
+            alpha=REGION_ALPHA[r],
+            hatch=REGION_HATCHES[r],
+            edgecolor="white" if r == 0 else "gray",
+        )
         # Uniform color per region — override with single color
         color = "#1a1a2e" if r == 0 else "#e94560"
         for bar in bars:
@@ -206,7 +220,9 @@ def main():
     ax.axhline(0, color="k", linewidth=0.8, linestyle="--")
     ax.set_xticks(x)
     ax.set_xticklabels(bin_labels, fontsize=TICKSIZE)
-    ax.set_ylabel("Mean T$_{bottom}$ prediction drop when region masked", fontsize=FONTSIZE - 1)
+    ax.set_ylabel(
+        "Mean T$_{bottom}$ prediction drop when region masked", fontsize=FONTSIZE - 1
+    )
     ax.tick_params(axis="y", labelsize=TICKSIZE)
     ax.legend(fontsize=FONTSIZE, title="Masked region", title_fontsize=FONTSIZE - 2)
     ax.grid(axis="y", alpha=0.3)
@@ -214,7 +230,8 @@ def main():
     ax.set_title(
         f"T$_{{bottom}}$ spatial–temporal perturbation\n"
         f"Ensemble of {len(exp_dirs)} seeds  ·  top-{len(idx_events)} MHW events  ·  7-day lead",
-        fontsize=TITLESIZE, fontweight="bold",
+        fontsize=TITLESIZE,
+        fontweight="bold",
     )
 
     out = Path(args.output)

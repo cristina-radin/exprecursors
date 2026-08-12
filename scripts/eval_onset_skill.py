@@ -14,35 +14,45 @@ Usage (CPU, login node):
 
 import argparse
 import sys
-import yaml
-import numpy as np
-import xarray as xr
-import torch
 from pathlib import Path
+
+import numpy as np
+import torch
+import xarray as xr
+import yaml
 from scipy.ndimage import uniform_filter1d
 from scipy.stats import pearsonr
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from scripts.train_partition import LocalOnlyLightningModule, RemoteOnlyLightningModule
 from src.data.datamodule import LazyDataModule
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
-from scripts.train_partition import RemoteOnlyLightningModule, LocalOnlyLightningModule
+from src.utils.paths import (
+    CLIM_FILE as CLIM_FILE_ENV,
+)
+from src.utils.paths import (
+    DATA_FILE as DATA_FILE_ENV,
+)
+from src.utils.paths import (
+    EXPERIMENTS_DIR,
+)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
 _NS_LAT = slice(100, 127)
 _NS_LON = slice(150, 187)
 
-CLIM_FILE = "/p/project1/hai_1127/inputs/sst_anomaly/sst_climatology_doy.nc"
-DATA_FILE  = "/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc"
+CLIM_FILE = CLIM_FILE_ENV
+DATA_FILE = DATA_FILE_ENV
 
-PARTITION_BASE = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/partition")
-FULL_BASE      = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/kfold")
-OUT_DIR        = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/partition/onset_skill")
+PARTITION_BASE = EXPERIMENTS_DIR / "partition"
+FULL_BASE = EXPERIMENTS_DIR / "kfold"
+OUT_DIR = EXPERIMENTS_DIR / "partition" / "onset_skill"
 
 MODULE_MAP = {
     "remote_only": RemoteOnlyLightningModule,
-    "local_only":  LocalOnlyLightningModule,
-    "full":        CNNLightningModule,
+    "local_only": LocalOnlyLightningModule,
+    "full": CNNLightningModule,
 }
 
 N_FOLDS = 5
@@ -50,12 +60,13 @@ N_FOLDS = 5
 
 # ── Hobday helpers ───────────────────────────────────────────────────────────
 
+
 def load_ns_p90(smooth_days=31):
     ds = xr.open_dataset(CLIM_FILE)
     p90 = ds.p90_thresh.sel(lat=slice(50.0, 63.0), lon=slice(-5.0, 13.0))
     p90 = p90.mean(dim=["lat", "lon"], skipna=True).values
     ds.close()
-    return uniform_filter1d(p90, size=smooth_days, mode="wrap")   # (365,)
+    return uniform_filter1d(p90, size=smooth_days, mode="wrap")  # (365,)
 
 
 def apply_hobday(exceedance, min_dur=5, max_gap=2):
@@ -65,21 +76,29 @@ def apply_hobday(exceedance, min_dur=5, max_gap=2):
     while i < n:
         if mhw[i]:
             j = i
-            while j < n and mhw[j]: j += 1
+            while j < n and mhw[j]:
+                j += 1
             k = j
-            while k < n and not mhw[k]: k += 1
+            while k < n and not mhw[k]:
+                k += 1
             if 0 < (k - j) <= max_gap and k < n:
-                mhw[j:k] = True; i = k
-            else: i = j
-        else: i += 1
+                mhw[j:k] = True
+                i = k
+            else:
+                i = j
+        else:
+            i += 1
     i = 0
     while i < n:
         if mhw[i]:
             j = i
-            while j < n and mhw[j]: j += 1
-            if j - i < min_dur: mhw[i:j] = False
+            while j < n and mhw[j]:
+                j += 1
+            if j - i < min_dur:
+                mhw[i:j] = False
             i = j
-        else: i += 1
+        else:
+            i += 1
     return mhw
 
 
@@ -95,12 +114,13 @@ def mhw_phase_labels(trues, doys, p90_ns):
             onset[i] = True
         i += 1
     labels = np.zeros(len(mhw), dtype=int)
-    labels[mhw]   = 2
+    labels[mhw] = 2
     labels[onset] = 1
     return labels
 
 
 # ── Inference for one fold ───────────────────────────────────────────────────
+
 
 def run_fold(fold, mode, lm_class, config_path, ckpt_path):
     print(f"\n  fold{fold}: loading checkpoint...")
@@ -108,14 +128,14 @@ def run_fold(fold, mode, lm_class, config_path, ckpt_path):
         config = yaml.safe_load(f)
 
     cnn_lstm = CNNLSTMModel(
-        in_channels       = config["in_channels"],
-        cnn_features      = config.get("cnn_features",    256),
-        lstm_hidden       = config.get("lstm_hidden",      512),
-        lstm_layers       = config.get("lstm_layers",        2),
-        temporal_features = config.get("temporal_features",  0),
-        dropout           = 0.0,
-        arch              = config.get("arch",       "lstm_only"),
-        gaussian_nll      = config.get("gaussian_nll",   False),
+        in_channels=config["in_channels"],
+        cnn_features=config.get("cnn_features", 256),
+        lstm_hidden=config.get("lstm_hidden", 512),
+        lstm_layers=config.get("lstm_layers", 2),
+        temporal_features=config.get("temporal_features", 0),
+        dropout=0.0,
+        arch=config.get("arch", "lstm_only"),
+        gaussian_nll=config.get("gaussian_nll", False),
     )
     lm = lm_class.load_from_checkpoint(ckpt_path, model=cnn_lstm, map_location="cpu")
     lm.eval()
@@ -126,7 +146,7 @@ def run_fold(fold, mode, lm_class, config_path, ckpt_path):
     full_ds = dm.train_dataset.dataset
 
     window_size = config.get("window_size", 60)
-    lead_time   = config.get("lead_time",    7)
+    lead_time = config.get("lead_time", 7)
 
     preds, trues, doys = [], [], []
     with torch.no_grad():
@@ -145,7 +165,8 @@ def run_fold(fold, mode, lm_class, config_path, ckpt_path):
 
             target_abs = abs_idx + window_size - 1 + lead_time
             doy = int(full_ds.doys[target_abs])
-            if doy == 366: doy = 365
+            if doy == 366:
+                doy = 365
             doys.append(doy)
 
             if (idx + 1) % 500 == 0:
@@ -157,15 +178,16 @@ def run_fold(fold, mode, lm_class, config_path, ckpt_path):
 
 # ── Skill by phase ───────────────────────────────────────────────────────────
 
+
 def skill_by_phase(preds, trues, doys, p90_ns):
     labels = mhw_phase_labels(trues, doys, p90_ns)
 
     results = {}
     for phase_name, mask in [
-        ("all",       np.ones(len(labels), dtype=bool)),
-        ("onset",     labels == 1),
+        ("all", np.ones(len(labels), dtype=bool)),
+        ("onset", labels == 1),
         ("mid_event", labels == 2),
-        ("no_mhw",    labels == 0),
+        ("no_mhw", labels == 0),
     ]:
         if mask.sum() < 10:
             results[phase_name] = {"n": int(mask.sum()), "r_model": np.nan}
@@ -182,9 +204,12 @@ def skill_by_phase(preds, trues, doys, p90_ns):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", required=True, choices=["remote_only", "local_only", "full"])
+    parser.add_argument(
+        "--mode", required=True, choices=["remote_only", "local_only", "full"]
+    )
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -198,19 +223,29 @@ def main():
 
     for fold in range(N_FOLDS):
         import re
+
         if args.mode == "full":
-            cfg      = FULL_BASE / f"TbotAtm_lstmonly_fold{fold}" / "config.yaml"
+            cfg = FULL_BASE / f"TbotAtm_lstmonly_fold{fold}" / "config.yaml"
             ckpt_dir = FULL_BASE / f"TbotAtm_lstmonly_fold{fold}" / "checkpoints"
         else:
-            folder   = "remote" if args.mode == "remote_only" else "local"
-            cfg      = Path(f"/p/project1/hai_1127/radin1/exprecursors/partition/configs/{folder}/fold{fold}.yaml")
-            name     = "remote" if args.mode == "remote_only" else "local"
-            ckpt_dir = PARTITION_BASE / f"TbotAtm_{name}_seed42_fold{fold}" / "checkpoints"
+            folder = "remote" if args.mode == "remote_only" else "local"
+            cfg = (
+                Path(__file__).parents[1]
+                / f"partition/configs/{folder}/fold{fold}.yaml"
+            )
+            name = "remote" if args.mode == "remote_only" else "local"
+            ckpt_dir = (
+                PARTITION_BASE / f"TbotAtm_{name}_seed42_fold{fold}" / "checkpoints"
+            )
 
-        ckpts = [c for c in ckpt_dir.glob("*.ckpt") if not re.search(r"-v\d+\.ckpt$", str(c))]
+        ckpts = [
+            c for c in ckpt_dir.glob("*.ckpt") if not re.search(r"-v\d+\.ckpt$", str(c))
+        ]
+
         def val_loss(c):
             m = re.search(r"val_loss=([-\d.]+?)\.ckpt", c.name)
             return float(m.group(1).rstrip(".")) if m else float("inf")
+
         best_ckpt = min(ckpts, key=val_loss)
         print(f"\nfold{fold}: {best_ckpt.name}")
 
@@ -224,7 +259,9 @@ def main():
         print(f"  Results fold{fold}:")
         for phase, res in results.items():
             if isinstance(res, dict):
-                print(f"    {phase:<12}: n={res['n']:4d}  r={res.get('r_model', float('nan')):.4f}")
+                print(
+                    f"    {phase:<12}: n={res['n']:4d}  r={res.get('r_model', float('nan')):.4f}"
+                )
             else:
                 print(f"    {phase}: {res:.4f}")
 
@@ -232,16 +269,37 @@ def main():
     print(f"SUMMARY — {args.mode}  (mean ± std across {N_FOLDS} folds)")
     print(f"{'='*55}")
     for phase in ["all", "onset", "mid_event", "no_mhw"]:
-        rs = [all_results[f][phase]["r_model"] for f in range(N_FOLDS)
-              if phase in all_results[f] and not np.isnan(all_results[f][phase].get("r_model", np.nan))]
-        ns = [all_results[f][phase]["n"] for f in range(N_FOLDS) if phase in all_results[f]]
-        print(f"  {phase:<12}: r = {np.mean(rs):.4f} ± {np.std(rs):.4f}  (n_total={sum(ns)})")
+        rs = [
+            all_results[f][phase]["r_model"]
+            for f in range(N_FOLDS)
+            if phase in all_results[f]
+            and not np.isnan(all_results[f][phase].get("r_model", np.nan))
+        ]
+        ns = [
+            all_results[f][phase]["n"]
+            for f in range(N_FOLDS)
+            if phase in all_results[f]
+        ]
+        print(
+            f"  {phase:<12}: r = {np.mean(rs):.4f} ± {np.std(rs):.4f}  (n_total={sum(ns)})"
+        )
 
     import json
-    summary = {str(f): {k: (v if not isinstance(v, dict) else {kk: float(vv) if not isinstance(vv, int) else vv
-                                                                  for kk, vv in v.items()})
-                         for k, v in r.items()}
-               for f, r in all_results.items()}
+
+    summary = {
+        str(f): {
+            k: (
+                v
+                if not isinstance(v, dict)
+                else {
+                    kk: float(vv) if not isinstance(vv, int) else vv
+                    for kk, vv in v.items()
+                }
+            )
+            for k, v in r.items()
+        }
+        for f, r in all_results.items()
+    }
     with open(OUT_DIR / f"{args.mode}_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\nSaved: {OUT_DIR}/{args.mode}_summary.json")

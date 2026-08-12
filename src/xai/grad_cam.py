@@ -9,22 +9,23 @@ Strategy:
   5. Final map = sum_t( attn_t * cam_t )  →  upsampled to (lat, lon).
 """
 
-import torch
-import torch.nn.functional as F
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn.functional as F
 
 # ---------------------------------------------------------------------------
 # Grad-CAM engine
 # ---------------------------------------------------------------------------
 
+
 class AttentionGradCAM:
     def __init__(self, lightning_module):
-        self.lm    = lightning_module
+        self.lm = lightning_module
         self.model = lightning_module.model
-        self._acts  = None
+        self._acts = None
         self._grads = None
 
         target_layer = self._find_last_conv()
@@ -40,7 +41,7 @@ class AttentionGradCAM:
         return last
 
     def _save_act(self, module, inp, out):
-        self._acts = out          # (batch*window, C, H', W')
+        self._acts = out  # (batch*window, C, H', W')
 
     def _save_grad(self, module, grad_in, grad_out):
         self._grads = grad_out[0]  # (batch*window, C, H', W')
@@ -63,26 +64,31 @@ class AttentionGradCAM:
         torch.backends.cudnn.enabled = prev
 
         window = x_spatial.shape[1]
-        lat    = x_spatial.shape[3]
-        lon    = x_spatial.shape[4]
+        lat = x_spatial.shape[3]
+        lon = x_spatial.shape[4]
 
-        acts   = self._acts.detach()    # (window, C, H', W')
-        grads  = self._grads.detach()
+        acts = self._acts.detach()  # (window, C, H', W')
+        grads = self._grads.detach()
         attn_w = attn.squeeze(0).detach()  # (window,)
 
         cam = torch.zeros(acts.shape[2], acts.shape[3], device=acts.device)
         for t in range(window):
-            w_t   = grads[t].mean(dim=(1, 2), keepdim=True)   # (C,1,1)
-            cam_t = F.relu((w_t * acts[t]).sum(dim=0))         # (H',W')
-            cam   = cam + attn_w[t] * cam_t
+            w_t = grads[t].mean(dim=(1, 2), keepdim=True)  # (C,1,1)
+            cam_t = F.relu((w_t * acts[t]).sum(dim=0))  # (H',W')
+            cam = cam + attn_w[t] * cam_t
 
         cam = cam / (cam.max() + 1e-8)
-        cam = F.interpolate(
-            cam.unsqueeze(0).unsqueeze(0),
-            size=(lat, lon),
-            mode="bilinear",
-            align_corners=False,
-        ).squeeze().cpu().numpy()
+        cam = (
+            F.interpolate(
+                cam.unsqueeze(0).unsqueeze(0),
+                size=(lat, lon),
+                mode="bilinear",
+                align_corners=False,
+            )
+            .squeeze()
+            .cpu()
+            .numpy()
+        )
 
         return cam, attn_w.cpu().numpy()
 
@@ -91,32 +97,49 @@ class AttentionGradCAM:
 # Plotting
 # ---------------------------------------------------------------------------
 
+
 def _plot_cam(cam, xs_np, variables, ocean_vars, lat, lon, title, save_path):
     """Row 0: last input frame per variable. Row 1: Grad-CAM."""
-    n_vars  = len(variables)
-    extent  = [lon.min(), lon.max(), lat.min(), lat.max()]
+    n_vars = len(variables)
+    extent = [lon.min(), lon.max(), lat.min(), lat.max()]
     fig, axes = plt.subplots(2, n_vars, figsize=(4 * n_vars, 7))
     if n_vars == 1:
         axes = axes.reshape(2, 1)
 
     for i, var in enumerate(variables):
-        frame = xs_np[-1, i].copy()   # last day of window, (lat, lon)
+        frame = xs_np[-1, i].copy()  # last day of window, (lat, lon)
         if var in ocean_vars:
             frame = np.where(frame == 0, np.nan, frame)
         vmax = np.nanpercentile(np.abs(frame), 98) or 1.0
 
         ax0 = axes[0, i]
-        im0 = ax0.imshow(frame, origin="lower", extent=extent,
-                         cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+        im0 = ax0.imshow(
+            frame,
+            origin="lower",
+            extent=extent,
+            cmap="RdBu_r",
+            vmin=-vmax,
+            vmax=vmax,
+            aspect="auto",
+        )
         ax0.set_title(var, fontsize=9)
-        ax0.set_xlabel("lon"); ax0.set_ylabel("lat")
+        ax0.set_xlabel("lon")
+        ax0.set_ylabel("lat")
         plt.colorbar(im0, ax=ax0, fraction=0.03)
 
         ax1 = axes[1, i]
-        im1 = ax1.imshow(cam, origin="lower", extent=extent,
-                         cmap="YlOrRd", vmin=0, vmax=1, aspect="auto")
-        ax1.set_title(f"Grad-CAM", fontsize=9)
-        ax1.set_xlabel("lon"); ax1.set_ylabel("lat")
+        im1 = ax1.imshow(
+            cam,
+            origin="lower",
+            extent=extent,
+            cmap="YlOrRd",
+            vmin=0,
+            vmax=1,
+            aspect="auto",
+        )
+        ax1.set_title("Grad-CAM", fontsize=9)
+        ax1.set_xlabel("lon")
+        ax1.set_ylabel("lat")
         plt.colorbar(im1, ax=ax1, fraction=0.03)
 
     fig.suptitle(title, fontsize=10)
@@ -127,7 +150,7 @@ def _plot_cam(cam, xs_np, variables, ocean_vars, lat, lon, title, save_path):
 
 def _plot_attention(attn_list, labels, save_path):
     window = len(attn_list[0])
-    days   = np.arange(-window + 1, 1)   # -59 … 0
+    days = np.arange(-window + 1, 1)  # -59 … 0
 
     fig, ax = plt.subplots(figsize=(10, 4))
     for attn, label in zip(attn_list, labels):
@@ -147,10 +170,12 @@ def _plot_attention(attn_list, labels, save_path):
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def analyze_gradcam(lightning_module, test_dataset, output_dir,
-                    n_samples, config, lat, lon):
-    device     = next(lightning_module.parameters()).device
-    variables  = config["variables"]
+
+def analyze_gradcam(
+    lightning_module, test_dataset, output_dir, n_samples, config, lat, lon
+):
+    device = next(lightning_module.parameters()).device
+    variables = config["variables"]
     ocean_vars = set(config.get("ocean_variables", variables))
     output_dir = Path(output_dir)
 
@@ -167,12 +192,12 @@ def analyze_gradcam(lightning_module, test_dataset, output_dir,
                 xt.unsqueeze(0).float().to(device),
             )
         preds.append(p.item())
-    preds   = np.array(preds)
-    order   = np.argsort(preds)
+    preds = np.array(preds)
+    order = np.argsort(preds)
 
     selected = {
         "high_anom": list(order[-n_samples:][::-1]),
-        "low_anom":  list(order[:n_samples]),
+        "low_anom": list(order[:n_samples]),
     }
 
     attn_all, labels_all = [], []
@@ -184,14 +209,17 @@ def analyze_gradcam(lightning_module, test_dataset, output_dir,
             xt_dev = xt.unsqueeze(0).to(device)
 
             cam, attn = engine.compute(xs_dev, xt_dev)
-            label = (f"{category} #{rank+1}  "
-                     f"pred={preds[idx]:.2f}  true={y_true.item():.2f}")
+            label = (
+                f"{category} #{rank+1}  "
+                f"pred={preds[idx]:.2f}  true={y_true.item():.2f}"
+            )
             attn_all.append(attn)
             labels_all.append(label)
 
             save_path = output_dir / f"gradcam_{category}_{rank+1}.png"
-            _plot_cam(cam, xs.numpy(), variables, ocean_vars,
-                      lat, lon, label, save_path)
+            _plot_cam(
+                cam, xs.numpy(), variables, ocean_vars, lat, lon, label, save_path
+            )
             print(f"  Saved {save_path.name}")
 
     _plot_attention(attn_all, labels_all, output_dir / "attention_weights.png")

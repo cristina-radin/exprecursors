@@ -14,40 +14,47 @@ Usage:
 
 import argparse
 import sys
-import numpy as np
+
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
 from datamodule import LazyDataModule
 from model import CNNLightningModule, CNNLSTMModel
-from xai.utils import load_config
+
 from xai.integrated_gradients import _integrated_gradients
 from xai.run_xai import top_indices_for_period
+from xai.utils import load_config
 
-FONTSIZE  = 18
+FONTSIZE = 18
 TITLESIZE = 20
-TICKSIZE  = 14
+TICKSIZE = 14
 
 VAR_LABELS = {
     "ptho_bot": "T$_{bottom}$",
-    "to_anom":  "SST anom.",
-    "u10":      "U-wind",
-    "v10":      "V-wind",
-    "msl":      "SLP",
-    "ssr":      "Solar rad.",
+    "to_anom": "SST anom.",
+    "u10": "U-wind",
+    "v10": "V-wind",
+    "msl": "SLP",
+    "ssr": "Solar rad.",
 }
 
 
 def best_checkpoint(exp_dir):
     ckpts = list((exp_dir / "checkpoints").glob("*.ckpt"))
+
     def val_loss(p):
-        try: return float(str(p).split("val_loss=")[1].replace(".ckpt",""))
-        except: return float("inf")
+        try:
+            return float(str(p).split("val_loss=")[1].replace(".ckpt", ""))
+        except:
+            return float("inf")
+
     return min(ckpts, key=val_loss)
 
 
@@ -69,38 +76,38 @@ def load_model(ckpt_path, config, device):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp_dirs",    nargs="+", required=True)
-    parser.add_argument("--npz",         required=True)
-    parser.add_argument("--output",      default="poster_figures/fig_ig_peryear.png")
-    parser.add_argument("--n_per_year",  type=int, default=5)
-    parser.add_argument("--no_cuda",     action="store_true")
+    parser.add_argument("--exp_dirs", nargs="+", required=True)
+    parser.add_argument("--npz", required=True)
+    parser.add_argument("--output", default="poster_figures/fig_ig_peryear.png")
+    parser.add_argument("--n_per_year", type=int, default=5)
+    parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()
 
-    device   = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     exp_dirs = [Path(d) for d in args.exp_dirs]
 
-    config0   = load_config(str(exp_dirs[0] / "config.yaml"))
+    config0 = load_config(str(exp_dirs[0] / "config.yaml"))
     variables = config0["variables"]
-    n_vars    = len(variables)
+    n_vars = len(variables)
 
-    d        = np.load(args.npz, allow_pickle=True)
+    d = np.load(args.npz, allow_pickle=True)
     ens_pred = d["ens_full"]
-    years    = d["years"]
+    years = d["years"]
     all_years = sorted(set(years.astype(int)))
 
     # Load models + datasets once
     models, datasets = [], []
     for exp_dir in exp_dirs:
-        config  = load_config(str(exp_dir / "config.yaml"))
-        lm      = load_model(best_checkpoint(exp_dir), config, device)
-        dm      = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
+        config = load_config(str(exp_dir / "config.yaml"))
+        lm = load_model(best_checkpoint(exp_dir), config, device)
+        dm = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
         dm.setup()
         models.append(lm)
         datasets.append(dm.train_dataset.dataset)
         print(f"  Loaded seed={config.get('seed','?')}")
 
     # Per-year IG importance matrix
-    year_importance = {}   # year → (n_vars,) normalized
+    year_importance = {}  # year → (n_vars,) normalized
 
     for yr in all_years:
         idx_yr = top_indices_for_period(
@@ -115,17 +122,21 @@ def main():
         for lm, full_ds in zip(models, datasets):
             for idx in idx_yr:
                 xs, xt, _ = full_ds[idx]
-                attrs = _integrated_gradients(lm,
-                                              xs.unsqueeze(0).to(device),
-                                              xt.unsqueeze(0).to(device))
+                attrs = _integrated_gradients(
+                    lm, xs.unsqueeze(0).to(device), xt.unsqueeze(0).to(device)
+                )
                 accum += attrs.abs().mean(dim=(0, 2, 3)).numpy()
                 count += 1
 
         accum /= count
         # Normalize to % within year
         year_importance[yr] = accum / accum.sum() * 100
-        print(f"  {yr}: {len(idx_yr)} events × {len(exp_dirs)} seeds  "
-              + "  ".join(f"{v}={year_importance[yr][i]:.1f}%" for i,v in enumerate(variables)))
+        print(
+            f"  {yr}: {len(idx_yr)} events × {len(exp_dirs)} seeds  "
+            + "  ".join(
+                f"{v}={year_importance[yr][i]:.1f}%" for i, v in enumerate(variables)
+            )
+        )
 
     if not year_importance:
         print("No years with events found.")
@@ -133,15 +144,14 @@ def main():
 
     # Build matrix (years × vars)
     yrs_with_data = sorted(year_importance.keys())
-    mat = np.array([year_importance[y] for y in yrs_with_data])   # (n_years, n_vars)
+    mat = np.array([year_importance[y] for y in yrs_with_data])  # (n_years, n_vars)
 
     var_labels = [VAR_LABELS.get(v, v) for v in variables]
 
     # --- Heatmap ---
     fig, ax = plt.subplots(figsize=(14, 5))
 
-    im = ax.imshow(mat.T, aspect="auto", cmap="YlOrRd",
-                   vmin=0, vmax=mat.max())
+    im = ax.imshow(mat.T, aspect="auto", cmap="YlOrRd", vmin=0, vmax=mat.max())
 
     ax.set_xticks(range(len(yrs_with_data)))
     ax.set_xticklabels(yrs_with_data, rotation=90, fontsize=TICKSIZE - 2)
@@ -155,7 +165,9 @@ def main():
     ax.set_title(
         f"Variable importance per year — Integrated Gradients\n"
         f"Ensemble of {len(exp_dirs)} seeds  ·  top-{args.n_per_year} events/year  ·  7-day lead",
-        fontsize=TITLESIZE, fontweight="bold", pad=10,
+        fontsize=TITLESIZE,
+        fontweight="bold",
+        pad=10,
     )
 
     out = Path(args.output)
@@ -166,10 +178,12 @@ def main():
     print(f"\nSaved: {out}")
 
     # Also save npz for further analysis
-    np.savez(out.parent / "ig_peryear.npz",
-             years=np.array(yrs_with_data),
-             importance=mat,
-             variables=np.array(variables))
+    np.savez(
+        out.parent / "ig_peryear.npz",
+        years=np.array(yrs_with_data),
+        importance=mat,
+        variables=np.array(variables),
+    )
     print(f"Saved: {out.parent / 'ig_peryear.npz'}")
 
 

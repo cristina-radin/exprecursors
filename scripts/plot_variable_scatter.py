@@ -10,11 +10,14 @@ Usage:
 
 import argparse
 import sys
-import numpy as np
+
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -22,31 +25,35 @@ from src.data.datamodule import LazyDataModule
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 from src.xai.utils import load_config
 
-BASE = Path("/p/project1/hai_1127/radin1/exprecursors")
+BASE = Path(__file__).parents[1]
 
 MODELS = {
     "noSST\n(atmosphere only)": {
-        "config":     BASE / "split_blockyear/noSST_layers2/config_blockyear_noSST.yaml",
-        "checkpoint": BASE / "split_blockyear/noSST_layers2/checkpoints/cnn-lstm-epoch=08-val_loss=0.8687.ckpt",
-        "color":      "#ff7f0e",
+        "config": BASE / "split_blockyear/noSST_layers2/config_blockyear_noSST.yaml",
+        "checkpoint": BASE
+        / "split_blockyear/noSST_layers2/checkpoints/cnn-lstm-epoch=08-val_loss=0.8687.ckpt",
+        "color": "#ff7f0e",
     },
     "SST\n(+ surface SST)": {
-        "config":     BASE / "split_blockyear/SST_layers2/config_blockyear_baseline.yaml",
-        "checkpoint": BASE / "split_blockyear/SST_layers2/checkpoints/cnn-lstm-epoch=12-val_loss=0.5751.ckpt",
-        "color":      "#1f77b4",
+        "config": BASE / "split_blockyear/SST_layers2/config_blockyear_baseline.yaml",
+        "checkpoint": BASE
+        / "split_blockyear/SST_layers2/checkpoints/cnn-lstm-epoch=12-val_loss=0.5751.ckpt",
+        "color": "#1f77b4",
     },
     "deepSST\n(+ bottom ocean temp)": {
-        "config":     BASE / "split_blockyear/deepSST_layers2/config_blockyear_deepSST.yaml",
-        "checkpoint": BASE / "split_blockyear/deepSST_layers2/checkpoints/cnn-lstm-epoch=07-val_loss=0.5455.ckpt",
-        "color":      "#2ca02c",
+        "config": BASE
+        / "split_blockyear/deepSST_layers2/config_blockyear_deepSST.yaml",
+        "checkpoint": BASE
+        / "split_blockyear/deepSST_layers2/checkpoints/cnn-lstm-epoch=07-val_loss=0.5455.ckpt",
+        "color": "#2ca02c",
     },
 }
 
 # Pre-computed skill scores (from eval_results)
 SKILL = {
-    "noSST":    {"r": 0.683, "ETS": 0.337, "CSI": 0.649},
-    "SST":      {"r": 0.864, "ETS": 0.493, "CSI": 0.745},
-    "deepSST":  {"r": 0.879, "ETS": 0.552, "CSI": 0.767},
+    "noSST": {"r": 0.683, "ETS": 0.337, "CSI": 0.649},
+    "SST": {"r": 0.864, "ETS": 0.493, "CSI": 0.745},
+    "deepSST": {"r": 0.879, "ETS": 0.552, "CSI": 0.767},
 }
 
 
@@ -109,9 +116,12 @@ def main():
     scatter_axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
     bar_ax = fig.add_subplot(gs[1, :])
 
-    fig.suptitle("Impact of ocean variable choice on MHW prediction skill\n"
-                 "(block-year split, 2 LSTM layers, lead = 7 days)",
-                 fontsize=13, y=0.98)
+    fig.suptitle(
+        "Impact of ocean variable choice on MHW prediction skill\n"
+        "(block-year split, 2 LSTM layers, lead = 7 days)",
+        fontsize=13,
+        y=0.98,
+    )
 
     # ---- Scatter plots ----
     for ax, (label, spec) in zip(scatter_axes, MODELS.items()):
@@ -129,9 +139,14 @@ def main():
         ax.set_xlabel("Observed to_anom (°C)", fontsize=10)
         ax.set_ylabel("Predicted to_anom (°C)", fontsize=10)
         ax.set_title(label, fontsize=11)
-        ax.annotate(f"r = {r:.3f}\nn = {len(preds):,}",
-                    xy=(0.05, 0.92), xycoords="axes fraction", fontsize=10, va="top",
-                    bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
+        ax.annotate(
+            f"r = {r:.3f}\nn = {len(preds):,}",
+            xy=(0.05, 0.92),
+            xycoords="axes fraction",
+            fontsize=10,
+            va="top",
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+        )
         ax.set_aspect("equal", adjustable="datalim")
 
     # ---- Bar chart ----
@@ -143,10 +158,18 @@ def main():
 
     for i, (name, col) in enumerate(zip(model_names, colors_bar)):
         vals = [SKILL[name][m] for m in metrics]
-        bars = bar_ax.bar(x + (i - 1) * width, vals, width, label=name, color=col, alpha=0.85)
+        bars = bar_ax.bar(
+            x + (i - 1) * width, vals, width, label=name, color=col, alpha=0.85
+        )
         for bar, val in zip(bars, vals):
-            bar_ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                        f"{val:.3f}", ha="center", va="bottom", fontsize=9)
+            bar_ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.01,
+                f"{val:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
 
     bar_ax.set_xticks(x)
     bar_ax.set_xticklabels(["Pearson r", "ETS", "CSI"], fontsize=11)

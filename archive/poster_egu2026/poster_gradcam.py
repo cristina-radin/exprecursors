@@ -14,23 +14,26 @@ Usage:
 
 import argparse
 import sys
+
+import matplotlib
 import numpy as np
 import xarray as xr
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from pathlib import Path
-from scipy.ndimage import binary_dilation
 
+matplotlib.use("Agg")
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import torch
+from scipy.ndimage import binary_dilation
 
 sys.path.append(str(Path(__file__).parent.parent))
 from datamodule import LazyDataModule
 from model import CNNLightningModule, CNNLSTMModel
-from xai.utils import load_config
-from xai.grad_cam import AttentionGradCAM
 
-FONTSIZE  = 20
+from xai.grad_cam import AttentionGradCAM
+from xai.utils import load_config
+
+FONTSIZE = 20
 TITLESIZE = 22
 
 
@@ -38,11 +41,13 @@ def best_checkpoint(exp_dir: Path) -> Path:
     ckpts = list((exp_dir / "checkpoints").glob("*.ckpt"))
     if not ckpts:
         raise FileNotFoundError(f"No checkpoints in {exp_dir}/checkpoints/")
+
     def val_loss(p):
         try:
             return float(str(p).split("val_loss=")[1].replace(".ckpt", ""))
         except Exception:
             return float("inf")
+
     return min(ckpts, key=val_loss)
 
 
@@ -56,7 +61,9 @@ def load_model(ckpt_path, config, device):
         dropout=config.get("dropout", 0.3),
     )
     lm = CNNLightningModule.load_from_checkpoint(
-        str(ckpt_path), model=cnn_lstm, map_location=device,
+        str(ckpt_path),
+        model=cnn_lstm,
+        map_location=device,
     )
     lm.eval().to(device)
     return lm
@@ -76,23 +83,23 @@ def sep_indices(preds, n, sep=60):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_dirs", nargs="+", required=True)
-    parser.add_argument("--npz",      required=True)
-    parser.add_argument("--output",   default="poster_figures/fig_gradcam_poster.png")
+    parser.add_argument("--npz", required=True)
+    parser.add_argument("--output", default="poster_figures/fig_gradcam_poster.png")
     parser.add_argument("--n_events", type=int, default=50)
-    parser.add_argument("--no_cuda",  action="store_true")
+    parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()
 
-    device   = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     exp_dirs = [Path(d) for d in args.exp_dirs]
 
     # Load lat/lon and land mask
-    config0  = load_config(str(exp_dirs[0] / "config.yaml"))
-    ds_xr    = xr.open_dataset(config0["data_dir"])
+    config0 = load_config(str(exp_dirs[0] / "config.yaml"))
+    ds_xr = xr.open_dataset(config0["data_dir"])
     lat, lon = ds_xr.lat.values, ds_xr.lon.values
     ds_xr.close()
 
     # Select top events by ensemble prediction
-    d        = np.load(args.npz, allow_pickle=True)
+    d = np.load(args.npz, allow_pickle=True)
     ens_pred = d["ens_full"]
     idx_events = sep_indices(ens_pred, args.n_events, sep=60)
     print(f"Selected {len(idx_events)} top events")
@@ -101,20 +108,20 @@ def main():
     cam_stack = []
     for exp_dir in exp_dirs:
         config = load_config(str(exp_dir / "config.yaml"))
-        ckpt   = best_checkpoint(exp_dir)
-        lm     = load_model(ckpt, config, device)
-        dm     = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
+        ckpt = best_checkpoint(exp_dir)
+        lm = load_model(ckpt, config, device)
+        dm = LazyDataModule(config_path=str(exp_dir / "config.yaml"))
         dm.setup()
         full_ds = dm.train_dataset.dataset
-        seed    = config.get("seed", "?")
+        seed = config.get("seed", "?")
         print(f"  Grad-CAM seed={seed}...")
 
-        engine    = AttentionGradCAM(lm)
+        engine = AttentionGradCAM(lm)
         cam_accum = np.zeros((len(lat), len(lon)))
 
         for k, idx in enumerate(idx_events):
             xs, xt, _ = full_ds[idx]
-            cam, _    = engine.compute(
+            cam, _ = engine.compute(
                 xs.unsqueeze(0).to(device),
                 xt.unsqueeze(0).to(device),
             )
@@ -125,35 +132,43 @@ def main():
         cam_accum /= len(idx_events)
         cam_stack.append(cam_accum)
 
-    cam_mean   = np.stack(cam_stack).mean(axis=0)   # (lat, lon)
-    cam_std    = np.stack(cam_stack).std(axis=0)
+    cam_mean = np.stack(cam_stack).mean(axis=0)  # (lat, lon)
+    cam_std = np.stack(cam_stack).std(axis=0)
 
     # Land mask
     dm0 = LazyDataModule(config_path=str(exp_dirs[0] / "config.yaml"))
     dm0.setup()
-    land_mask  = dm0.train_dataset.dataset.tierra_mask.numpy()
+    land_mask = dm0.train_dataset.dataset.tierra_mask.numpy()
     coast_mask = binary_dilation(land_mask, iterations=2)
-    cam_mean   = np.where(coast_mask, np.nan, cam_mean)
+    cam_mean = np.where(coast_mask, np.nan, cam_mean)
 
     # --- Plot ---
     extent = [lon.min(), lon.max(), lat.min(), lat.max()]
     fig, ax = plt.subplots(figsize=(9, 6))
 
-    im = ax.imshow(cam_mean, origin="lower", extent=extent,
-                   cmap="YlOrRd", vmin=0, vmax=np.nanpercentile(cam_mean, 98),
-                   aspect="auto")
+    im = ax.imshow(
+        cam_mean,
+        origin="lower",
+        extent=extent,
+        cmap="YlOrRd",
+        vmin=0,
+        vmax=np.nanpercentile(cam_mean, 98),
+        aspect="auto",
+    )
     cbar = plt.colorbar(im, ax=ax, fraction=0.035, pad=0.04)
     cbar.set_label("Grad-CAM activation (norm.)", fontsize=FONTSIZE - 2)
     cbar.ax.tick_params(labelsize=FONTSIZE - 4)
 
     ax.set_xlabel("Longitude", fontsize=FONTSIZE)
-    ax.set_ylabel("Latitude",  fontsize=FONTSIZE)
+    ax.set_ylabel("Latitude", fontsize=FONTSIZE)
     ax.tick_params(labelsize=FONTSIZE - 4)
 
     ax.set_title(
         f"Spatial attribution — Grad-CAM\n"
         f"Ensemble of {len(exp_dirs)} seeds  ·  top-{len(idx_events)} MHW events  ·  7-day lead",
-        fontsize=TITLESIZE, fontweight="bold", pad=10,
+        fontsize=TITLESIZE,
+        fontweight="bold",
+        pad=10,
     )
 
     out = Path(args.output)

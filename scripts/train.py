@@ -3,11 +3,11 @@ Training script for MHW precursor detection (CNN-LSTM + Temporal Attention).
 """
 
 from pathlib import Path
+
 import matplotlib.pyplot as plt
+import pytorch_lightning as pl
 import torch
 import yaml
-
-import pytorch_lightning as pl
 from pytorch_lightning.callbacks import (
     Callback,
     EarlyStopping,
@@ -24,9 +24,9 @@ class LossCurvePlotCallback(Callback):
     """Saves train/val loss curves as a PNG at the end of training."""
 
     def __init__(self, output_dir: Path):
-        self.output_dir   = Path(output_dir)
+        self.output_dir = Path(output_dir)
         self.train_losses = []
-        self.val_losses   = []
+        self.val_losses = []
 
     def on_train_epoch_end(self, trainer, pl_module):
         loss = trainer.callback_metrics.get("train_loss_epoch")
@@ -42,7 +42,7 @@ class LossCurvePlotCallback(Callback):
         epochs = range(1, len(self.train_losses) + 1)
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.plot(epochs, self.train_losses, label="train_loss")
-        ax.plot(epochs, self.val_losses,   label="val_loss")
+        ax.plot(epochs, self.val_losses, label="val_loss")
         ax.set_xlabel("Epoch")
         ax.set_ylabel("MSE loss (normalised target)")
         ax.set_title("Training and Validation Loss")
@@ -56,6 +56,7 @@ class LossCurvePlotCallback(Callback):
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config.yaml")
     args = parser.parse_args()
@@ -75,8 +76,8 @@ def main():
     model = CNNLSTMModel(
         in_channels=config["in_channels"],
         cnn_features=config.get("cnn_features", 128),
-        lstm_hidden=config.get("lstm_hidden",   256),
-        lstm_layers=config.get("lstm_layers",     2),
+        lstm_hidden=config.get("lstm_hidden", 256),
+        lstm_layers=config.get("lstm_layers", 2),
         temporal_features=config.get("temporal_features", 3),
         dropout=config.get("dropout", 0.3),
     )

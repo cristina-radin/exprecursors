@@ -8,28 +8,31 @@ Usage:
   python eval/make_xai_panel.py --output_dir poster_figures
 """
 import argparse
-import numpy as np
+
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+
 sys.path.append(".")
 from xai.utils import load_config
 
-BASE    = Path("split_blockyear/TbotAtm")
-CKPT    = "split_blockyear/TbotAtm/checkpoints/cnn-lstm-epoch=26-val_loss=0.5301.ckpt"
-CONFIG  = "split_blockyear/TbotAtm/config.yaml"
+BASE = Path("split_blockyear/TbotAtm")
+CKPT = "split_blockyear/TbotAtm/checkpoints/cnn-lstm-epoch=26-val_loss=0.5301.ckpt"
+CONFIG = "split_blockyear/TbotAtm/config.yaml"
 PERIODS = [("1985", "2004"), ("2005", "2014"), ("2015", "2024")]
-VARS    = ["ptho_bot", "u10", "v10", "msl", "ssr"]
+VARS = ["ptho_bot", "u10", "v10", "msl", "ssr"]
 
 VAR_LABELS = {
     "ptho_bot": "Bottom temperature  (T$_{bot}$)",
-    "u10":      "Zonal wind  (u10)",
-    "v10":      "Meridional wind  (v10)",
-    "msl":      "Sea level pressure  (msl)",
-    "ssr":      "Solar radiation  (ssr)",
+    "u10": "Zonal wind  (u10)",
+    "v10": "Meridional wind  (v10)",
+    "msl": "Sea level pressure  (msl)",
+    "ssr": "Solar radiation  (ssr)",
 }
 
 PERIOD_LABELS = ["1985–2004", "2005–2014", "2015–2024"]
@@ -38,8 +41,8 @@ PERIOD_LABELS = ["1985–2004", "2005–2014", "2015–2024"]
 def load_ig_arrays():
     """Load raw IG attributions by running inference."""
     import torch
-    from model import CNNLightningModule, CNNLSTMModel
     from datamodule import LazyDataModule
+    from model import CNNLightningModule, CNNLSTMModel
 
     config = load_config(CONFIG)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -52,7 +55,9 @@ def load_ig_arrays():
         temporal_features=3,
         dropout=config.get("dropout", 0.3),
     )
-    lm = CNNLightningModule.load_from_checkpoint(CKPT, model=cnn_lstm, map_location=device)
+    lm = CNNLightningModule.load_from_checkpoint(
+        CKPT, model=cnn_lstm, map_location=device
+    )
     lm.eval().to(device)
 
     dm = LazyDataModule(config_path=CONFIG)
@@ -60,6 +65,7 @@ def load_ig_arrays():
     full_ds = dm.train_dataset.dataset
 
     from xai.integrated_gradients import IntegratedGradients
+
     ig = IntegratedGradients(lm.model)
 
     preds, years = [], []
@@ -67,8 +73,8 @@ def load_ig_arrays():
         for idx in range(len(full_ds)):
             xs, xt, y = full_ds[idx]
             p, _ = lm.model.forward_with_attention(
-                xs.unsqueeze(0).float().to(device),
-                xt.unsqueeze(0).float().to(device))
+                xs.unsqueeze(0).float().to(device), xt.unsqueeze(0).float().to(device)
+            )
             preds.append(p.item())
             t = idx + full_ds.window_size - 1 + full_ds.lead_time
             years.append(int(full_ds.years[t]))
@@ -94,7 +100,9 @@ def load_ig_arrays():
 
             attrs = ig.attribute(xs_t, xt_t, n_steps=30)
             # attrs: (1, window, n_vars, lat, lon) → mean over window, abs
-            a = attrs.squeeze(0).abs().mean(dim=0).detach().cpu().numpy()  # (n_vars, lat, lon)
+            a = (
+                attrs.squeeze(0).abs().mean(dim=0).detach().cpu().numpy()
+            )  # (n_vars, lat, lon)
             if ig_sum is None:
                 ig_sum = a
             else:
@@ -122,8 +130,12 @@ def make_panel_from_saved(xai_dir, vars_to_show, out_dir):
     nrows = len(vars_to_show)
     ncols = len(PERIOD_LABELS)
 
-    fig, axes = plt.subplots(nrows, ncols, figsize=(14, 4.5 * nrows),
-                             gridspec_kw={"hspace": 0.35, "wspace": 0.05})
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(14, 4.5 * nrows),
+        gridspec_kw={"hspace": 0.35, "wspace": 0.05},
+    )
     if nrows == 1:
         axes = axes[np.newaxis, :]
 
@@ -143,7 +155,9 @@ def make_panel_from_saved(xai_dir, vars_to_show, out_dir):
                 ax.imshow(img)
                 ax.axis("off")
             else:
-                ax.text(0.5, 0.5, "N/A", ha="center", va="center", transform=ax.transAxes)
+                ax.text(
+                    0.5, 0.5, "N/A", ha="center", va="center", transform=ax.transAxes
+                )
                 ax.axis("off")
 
             if ri == 0:
@@ -151,9 +165,12 @@ def make_panel_from_saved(xai_dir, vars_to_show, out_dir):
             if ci == 0 and npy_path.exists():
                 ax.set_ylabel(VAR_LABELS.get(var, var), fontsize=12)
 
-    fig.suptitle("Integrated Gradients — spatial attribution for MHW events\n"
-                 f"Top-30 high-anomaly events per period  |  TbotAtm model (7-day lead)",
-                 fontsize=13, y=1.01)
+    fig.suptitle(
+        "Integrated Gradients — spatial attribution for MHW events\n"
+        "Top-30 high-anomaly events per period  |  TbotAtm model (7-day lead)",
+        fontsize=13,
+        y=1.01,
+    )
 
     out = out_dir / "fig_xai_ig_panel.png"
     fig.savefig(out, dpi=150, bbox_inches="tight")
@@ -163,11 +180,14 @@ def make_panel_from_saved(xai_dir, vars_to_show, out_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir",  default="poster_figures")
-    parser.add_argument("--vars",        nargs="+",
-                        default=["ptho_bot", "u10", "ssr"],
-                        help="Variables to show (rows)")
-    parser.add_argument("--xai_dir",     default="split_blockyear/TbotAtm/xai_results")
+    parser.add_argument("--output_dir", default="poster_figures")
+    parser.add_argument(
+        "--vars",
+        nargs="+",
+        default=["ptho_bot", "u10", "ssr"],
+        help="Variables to show (rows)",
+    )
+    parser.add_argument("--xai_dir", default="split_blockyear/TbotAtm/xai_results")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)

@@ -17,31 +17,41 @@ Usage:
   python eval/temporal_shuffle_eval.py --n_shuffle 10 --output experiments/figures/
 """
 
-import argparse, sys, glob, numpy as np, torch, yaml
+import argparse
+import glob
+import sys
 from pathlib import Path
+
+import numpy as np
+import torch
+import yaml
 from scipy.stats import pearsonr
-from torch.utils.data import DataLoader, Subset
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from dataset    import MHWDataset
+from model import CNNLightningModule, build_model
+
 from src.data.datamodule import MHWDataModule
-from model      import CNNLightningModule, build_model
+from src.utils.paths import (
+    EXPERIMENTS_DIR,
+)
 
-
-MASKED_DIR = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/masked")
-N_FOLDS    = 5
-SEEDS      = [42, 123, 456, 789, 1337]
+MASKED_DIR = Path(str(EXPERIMENTS_DIR))
+N_FOLDS = 5
+SEEDS = [42, 123, 456, 789, 1337]
 
 
 def best_ckpt(run_dir):
     ckpts = sorted(glob.glob(str(run_dir / "checkpoints" / "*.ckpt")))
     if not ckpts:
         return None
+
     # pick lowest val_loss from filename
     def val_loss(p):
         import re
+
         m = re.search(r"val_loss=([-\d.]+)", p)
         return float(m.group(1)) if m else 0.0
+
     return min(ckpts, key=val_loss)
 
 
@@ -63,24 +73,28 @@ def evaluate(model, loader, shuffle_window=False, n_shuffle=1, rng=None):
                     preds_batch.append(mu.cpu().numpy())
                 preds = np.mean(preds_batch, axis=0)
             else:
-                out   = model(x_spatial.float(), x_temporal.float())
+                out = model(x_spatial.float(), x_temporal.float())
                 preds = (out[:, 0]).cpu().numpy()
 
-            y_denorm = (y.squeeze().numpy() * model.target_std + model.target_mean)
+            y_denorm = y.squeeze().numpy() * model.target_std + model.target_mean
             p_denorm = preds * model.target_std + model.target_mean
             all_preds.append(p_denorm)
             all_targets.append(y_denorm)
 
-    preds   = np.concatenate(all_preds)
+    preds = np.concatenate(all_preds)
     targets = np.concatenate(all_targets)
-    r, _    = pearsonr(preds, targets)
+    r, _ = pearsonr(preds, targets)
     return r
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n_shuffle", type=int, default=20,
-                        help="Number of random permutations to average per sample")
+    parser.add_argument(
+        "--n_shuffle",
+        type=int,
+        default=20,
+        help="Number of random permutations to average per sample",
+    )
     parser.add_argument("--output", default="experiments/figures")
     args = parser.parse_args()
 
@@ -93,8 +107,8 @@ def main():
     for fold in range(N_FOLDS):
         for seed in SEEDS:
             run_name = f"SSTAtm_lstmonly_gnll_masked_seed{seed}_fold{fold}"
-            run_dir  = MASKED_DIR / run_name
-            ckpt     = best_ckpt(run_dir)
+            run_dir = MASKED_DIR / run_name
+            ckpt = best_ckpt(run_dir)
             if ckpt is None:
                 print(f"  SKIP {run_name}: no checkpoint")
                 continue
@@ -118,25 +132,40 @@ def main():
             lm.eval()
 
             r_orig = evaluate(lm, test_loader, shuffle_window=False)
-            r_shuf = evaluate(lm, test_loader, shuffle_window=True,
-                              n_shuffle=args.n_shuffle, rng=rng)
+            r_shuf = evaluate(
+                lm, test_loader, shuffle_window=True, n_shuffle=args.n_shuffle, rng=rng
+            )
 
             r_orig_all.append(r_orig)
             r_shuf_all.append(r_shuf)
-            print(f"  {run_name}: r_orig={r_orig:.4f}  r_shuffled={r_shuf:.4f}  "
-                  f"drop={r_orig-r_shuf:.4f}")
+            print(
+                f"  {run_name}: r_orig={r_orig:.4f}  r_shuffled={r_shuf:.4f}  "
+                f"drop={r_orig-r_shuf:.4f}"
+            )
 
     print(f"\n{'='*60}")
-    print(f"Original (ordered window):    r = {np.mean(r_orig_all):.4f} ± {np.std(r_orig_all):.4f}")
-    print(f"Shuffled window (no order):   r = {np.mean(r_shuf_all):.4f} ± {np.std(r_shuf_all):.4f}")
-    print(f"Drop from shuffling:          Δr = {np.mean(r_orig_all)-np.mean(r_shuf_all):.4f}")
-    print(f"\nIf Δr ≈ 0: model ignores temporal order → signal is correlation with mean state.")
-    print(f"If Δr >> 0: model uses temporal dynamics → signal is real predictability.")
+    print(
+        f"Original (ordered window):    r = {np.mean(r_orig_all):.4f} ± {np.std(r_orig_all):.4f}"
+    )
+    print(
+        f"Shuffled window (no order):   r = {np.mean(r_shuf_all):.4f} ± {np.std(r_shuf_all):.4f}"
+    )
+    print(
+        f"Drop from shuffling:          Δr = {np.mean(r_orig_all)-np.mean(r_shuf_all):.4f}"
+    )
+    print(
+        "\nIf Δr ≈ 0: model ignores temporal order → signal is correlation with mean state."
+    )
+    print("If Δr >> 0: model uses temporal dynamics → signal is real predictability.")
 
     with open(out_dir / "temporal_shuffle_eval.txt", "w") as f:
         f.write(f"n_shuffle={args.n_shuffle}  n_runs={len(r_orig_all)}\n")
-        f.write(f"Original:  r = {np.mean(r_orig_all):.4f} ± {np.std(r_orig_all):.4f}\n")
-        f.write(f"Shuffled:  r = {np.mean(r_shuf_all):.4f} ± {np.std(r_shuf_all):.4f}\n")
+        f.write(
+            f"Original:  r = {np.mean(r_orig_all):.4f} ± {np.std(r_orig_all):.4f}\n"
+        )
+        f.write(
+            f"Shuffled:  r = {np.mean(r_shuf_all):.4f} ± {np.std(r_shuf_all):.4f}\n"
+        )
         f.write(f"Drop:     Δr = {np.mean(r_orig_all)-np.mean(r_shuf_all):.4f}\n")
     print(f"Saved to {out_dir / 'temporal_shuffle_eval.txt'}")
 

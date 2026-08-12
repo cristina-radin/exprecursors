@@ -9,11 +9,14 @@ Usage:
 
 import argparse
 import sys
-import numpy as np
+
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -21,24 +24,26 @@ from src.data.datamodule import LazyDataModule
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 from src.xai.utils import load_config
 
-
-BASE = Path("/p/project1/hai_1127/radin1/exprecursors")
+BASE = Path(__file__).parents[1]
 
 SPLITS = {
     "Random\n(r ≈ 0.98, invalid)": {
-        "config":     BASE / "split_random/SST_layers2/config.yaml",
-        "checkpoint": BASE / "split_random/SST_layers2/outputs/checkpoints/cnn-lstm-epoch=207-val_loss=0.0492.ckpt",
-        "color":      "#d62728",
+        "config": BASE / "split_random/SST_layers2/config.yaml",
+        "checkpoint": BASE
+        / "split_random/SST_layers2/outputs/checkpoints/cnn-lstm-epoch=207-val_loss=0.0492.ckpt",
+        "color": "#d62728",
     },
     "Block-year\n(r = 0.864)": {
-        "config":     BASE / "split_blockyear/SST_layers2/config_blockyear_baseline.yaml",
-        "checkpoint": BASE / "split_blockyear/SST_layers2/checkpoints/cnn-lstm-epoch=12-val_loss=0.5751.ckpt",
-        "color":      "#2ca02c",
+        "config": BASE / "split_blockyear/SST_layers2/config_blockyear_baseline.yaml",
+        "checkpoint": BASE
+        / "split_blockyear/SST_layers2/checkpoints/cnn-lstm-epoch=12-val_loss=0.5751.ckpt",
+        "color": "#2ca02c",
     },
     "Temporal\n(r ≈ 0.43)": {
-        "config":     BASE / "split_temporal/SST_layers2/config_temporal_baseline.yaml",
-        "checkpoint": BASE / "split_temporal/SST_layers2/checkpoints/cnn-lstm-epoch=01-val_loss=0.3394.ckpt",
-        "color":      "#1f77b4",
+        "config": BASE / "split_temporal/SST_layers2/config_temporal_baseline.yaml",
+        "checkpoint": BASE
+        / "split_temporal/SST_layers2/checkpoints/cnn-lstm-epoch=01-val_loss=0.3394.ckpt",
+        "color": "#1f77b4",
     },
 }
 
@@ -97,8 +102,11 @@ def main():
     device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    fig.suptitle("Impact of split strategy on apparent model skill\n(SST, layers=2, lead=7d)",
-                 fontsize=13, y=1.01)
+    fig.suptitle(
+        "Impact of split strategy on apparent model skill\n(SST, layers=2, lead=7d)",
+        fontsize=13,
+        y=1.01,
+    )
 
     for ax, (label, spec) in zip(axes, SPLITS.items()):
         print(f"\n--- {label.replace(chr(10), ' ')} ---")
@@ -116,10 +124,14 @@ def main():
         ax.set_xlabel("Observed to_anom (°C)", fontsize=11)
         ax.set_ylabel("Predicted to_anom (°C)", fontsize=11)
         ax.set_title(label, fontsize=12)
-        ax.annotate(f"r = {r:.3f}\nn = {len(preds):,}",
-                    xy=(0.05, 0.92), xycoords="axes fraction",
-                    fontsize=11, va="top",
-                    bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
+        ax.annotate(
+            f"r = {r:.3f}\nn = {len(preds):,}",
+            xy=(0.05, 0.92),
+            xycoords="axes fraction",
+            fontsize=11,
+            va="top",
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+        )
         ax.set_aspect("equal", adjustable="datalim")
 
     plt.tight_layout()
