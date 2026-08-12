@@ -14,12 +14,8 @@ import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from partition.train_partition import (
-    RemoteOnlyLightningModule,
-    LocalOnlyLightningModule,
-    _NS_LAT,
-    _NS_LON,
-)
+from scripts.train_partition import RemoteOnlyLightningModule, LocalOnlyLightningModule
+from src.data.masking import _NS_LAT, _NS_LON
 
 BATCH, C, W, LAT, LON = 1, 3, 60, 141, 201
 

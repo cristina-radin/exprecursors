@@ -39,7 +39,7 @@ def _best_ckpt(ckpt_dir: Path) -> Path:
 
 def _load_fold_pred(fold: int, dummy_xs: torch.Tensor,
                     dummy_xt: torch.Tensor) -> np.ndarray:
-    from model import CNNLightningModule, CNNLSTMModel
+    from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 
     fold_dir = KFOLD_BASE / f"{EXPERIMENT}_fold{fold}"
     ckpt_dir = fold_dir / "checkpoints"

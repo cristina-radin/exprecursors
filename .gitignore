@@ -2,8 +2,8 @@ __pycache__/
 **/__pycache__/
 notebooks/__pycache__/
 notebooks/*.ipynb_checkpoints
-data/
-models/
+/data/
+/models/
 .venv
 venv/
 env/
@@ -27,25 +27,19 @@ wandb/
 *.png
 *.pdf
 
-# Runtime directories
+# Runtime directories — data and results, never commit
 experiments/
 share/
 old_mask/
-results/
+results/*
+!results/.gitkeep
 
-# Large figure outputs inside split_blockyear (keep poster_figures/)
-split_blockyear/**/gradcam_*.png
-split_blockyear/**/ig_spatial_*.png
-split_blockyear/**/timeseries_*.png
-split_blockyear/**/roc_curve.png
-split_blockyear/**/reliability_diagram.png
-split_blockyear/**/skill_scores_peryear.png
-split_blockyear/**/loss_curves.png
-split_blockyear/**/test_predictions.png
+# Root-level stray outputs
 test_predictions.png
 
 # Experiment logs and per-run outputs
 **/eval_results/
+split_blockyear/
 
 # Python build
 *.pyc
