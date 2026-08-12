@@ -1,6 +1,6 @@
 """
 MHW statistics using Hobday et al. 2016 definition:
-  - SST anomaly > 0 (above 90th pct threshold, encoded in to_anom)
+  - to_anom > p90_thresh(DOY)  — 90th pct of reference-period anomalies, ±5-day window
   - Duration >= 5 consecutive days
   - Gap closure: events separated by <= 2 days are merged
 
@@ -18,8 +18,10 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from pathlib import Path
 from pandas import Series
+from scipy.ndimage import uniform_filter1d
 
 DATA_FILE    = Path("/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc")
+CLIM_FILE    = Path("/p/project1/hai_1127/inputs/sst_anomaly/sst_climatology_doy.nc")
 OUT_DIR      = Path("/p/project1/hai_1127/inputs/daily/preprocess_data/")
 MIN_DURATION = 5
 GAP_CLOSURE  = 2
@@ -60,13 +62,31 @@ lon       = ds["lon"].values
 ds.close()
 
 T, nlat, nlon = to_anom.shape
+doys = ds["time"].dt.dayofyear.values
 print(f"  Domain: {nlat}×{nlon}, {T} days  ({years[0]}–{years[-1]})")
 
 ta_std = to_anom.std(axis=0)
 ocean  = (land_mask == 1) & (ta_std > 0.001)
 print(f"  Ocean pixels: {ocean.sum()}")
 
-binary = (to_anom > 0).astype(np.int8)
+# Load P90 threshold, interpolate to 0.5° grid, apply 31-day circular smooth
+print("Loading P90 threshold...")
+ds_clim   = xr.open_dataset(CLIM_FILE)
+p90_regrid = (
+    ds_clim["p90_thresh"]
+    .interp(lat=lat, lon=lon, method="linear", kwargs={"fill_value": "extrapolate"})
+    .values
+)   # (365, nlat, nlon)
+ds_clim.close()
+p90_smooth = uniform_filter1d(p90_regrid, size=31, axis=0, mode="wrap")
+
+# Per-DOY threshold comparison
+print("Building binary MHW array...")
+binary = np.zeros((T, nlat, nlon), dtype=np.int8)
+for doy in range(1, 366):
+    idx = np.where(doys == doy)[0]
+    if len(idx):
+        binary[idx] = (to_anom[idx] > p90_smooth[doy - 1]).astype(np.int8)
 binary[:, ~ocean] = 0
 
 # -------------------------------------------------------------------------
@@ -104,7 +124,7 @@ ax.plot(dates_m, frac_m, color="tomato", lw=0.7, alpha=0.8)
 ax.plot(dates_m, smooth, color="darkred", lw=2.0, label="12-month rolling mean")
 ax.set_ylabel("% ocean area in MHW (%)", fontsize=10)
 ax.set_title("Monthly fraction of North Atlantic in Marine Heatwave conditions\n"
-             f"Hobday 2016: to_anom > 0 for ≥{MIN_DURATION} consecutive days, "
+             f"Hobday 2016: to_anom > p90_thresh(DOY), ≥{MIN_DURATION} consecutive days, "
              f"gap closure ≤{GAP_CLOSURE} d", fontsize=10)
 ax.xaxis.set_major_locator(mdates.YearLocator(2))
 ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))

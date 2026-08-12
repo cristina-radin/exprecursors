@@ -61,7 +61,7 @@ class LazyDataset(Dataset):
 
         # Land mask: True where land — only applied to ocean variables
         land_mask        = torch.tensor(self.ds["land_mask"].values, dtype=torch.float32)
-        self.tierra_mask = (land_mask == 0)
+        self.is_land = (land_mask == 0)
 
         # Pre-load variables into memory
         print("Loading data into memory...")
@@ -228,7 +228,7 @@ class LazyDataset(Dataset):
                     data[i] -= self.clim_means[var][doy - 1]
 
             if var in self.ocean_variables:
-                data[:, self.tierra_mask] = float("nan")
+                data[:, self.is_land] = float("nan")
                 mean = float(torch.nanmean(data))
                 std  = float(torch.std(data[~torch.isnan(data)])) + 1e-8
             else:
@@ -289,7 +289,7 @@ class LazyDataset(Dataset):
             # Land mask (ocean variables only)
             for i, var in enumerate(self.variables):
                 if var in self.ocean_variables:
-                    frame[i, self.tierra_mask] = float("nan")
+                    frame[i, self.is_land] = float("nan")
 
             # Subtract day-of-year climatology (ERA5 variables only)
             if self.clim_means:
