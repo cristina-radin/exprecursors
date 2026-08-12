@@ -1,27 +1,39 @@
 __pycache__/
+**/__pycache__/
 notebooks/__pycache__/
 notebooks/*.ipynb_checkpoints
 data/
 models/
 .venv
-.ipynb_checkpoints
-.vscode
 venv/
 env/
-*.pyc
+.ipynb_checkpoints
+.vscode
 
-# Model checkpoints and large outputs
-*.ckpt
+# Large binary data — never commit
+*.nc
+*.npy
 *.npz
+*.ckpt
 checkpoints/
 wandb/
 
-# Experiment logs and per-run outputs
+# SLURM logs
+*.out
+*.err
 **/*.log
-**/eval_results/
-old_mask/
 
-# Large figure outputs inside experiment dirs (keep poster_figures/)
+# Figures and PDFs
+*.png
+*.pdf
+
+# Runtime directories
+experiments/
+share/
+old_mask/
+results/
+
+# Large figure outputs inside split_blockyear (keep poster_figures/)
 split_blockyear/**/gradcam_*.png
 split_blockyear/**/ig_spatial_*.png
 split_blockyear/**/timeseries_*.png
@@ -31,3 +43,17 @@ split_blockyear/**/skill_scores_peryear.png
 split_blockyear/**/loss_curves.png
 split_blockyear/**/test_predictions.png
 test_predictions.png
+
+# Experiment logs and per-run outputs
+**/eval_results/
+
+# Python build
+*.pyc
+*.pyo
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
