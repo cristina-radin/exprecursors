@@ -129,7 +129,7 @@ def main():
     )
     print(f"Selected: MHW={len(mhw_sample)}  non-MHW={len(nomhw_sample)}")
 
-    land_mask_np = full_ds.tierra_mask.numpy()
+    land_mask_np = full_ds.is_land.numpy()
     coast_mask = binary_dilation(land_mask_np, iterations=2)
 
     groups = {

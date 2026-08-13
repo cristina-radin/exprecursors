@@ -66,12 +66,12 @@ land_mask = ds["land_mask"].values
 time = ds["time"].values
 years = ds["time"].dt.year.values
 months = ds["time"].dt.month.values
+doys = ds["time"].dt.dayofyear.values
 lat = ds["lat"].values
 lon = ds["lon"].values
 ds.close()
 
 T, nlat, nlon = to_anom.shape
-doys = ds["time"].dt.dayofyear.values
 print(f"  Domain: {nlat}×{nlon}, {T} days  ({years[0]}–{years[-1]})")
 
 ta_std = to_anom.std(axis=0)

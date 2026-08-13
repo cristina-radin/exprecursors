@@ -250,7 +250,7 @@ def main():
 
     variables = config0["variables"]
     ocean_vars = set(config0.get("ocean_variables", variables))
-    land_mask = full_ds0.tierra_mask.numpy()
+    land_mask = full_ds0.is_land.numpy()
 
     # ---------------------------------------------------------------------------
     # Collect ensemble predictions (average across all seeds)

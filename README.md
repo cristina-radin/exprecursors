@@ -7,41 +7,14 @@ local/remote predictability partitioning.
 ## Project structure
 
 ```
-src/
-├── data/
-│   ├── dataset.py          # LazyDataset — sliding window loader
-│   ├── datamodule.py       # PyTorch Lightning DataModule (k-fold splits)
-│   └── masking.py          # NS-box masking: mask_remote(), mask_local()
-├── models/
-│   └── cnn_lstm.py         # CNN-LSTM architecture + Lightning wrapper
-├── xai/
-│   ├── integrated_gradients.py
-│   ├── grad_cam.py
-│   └── utils.py
-└── utils/
-    ├── checkpoints.py      # best_ckpt() — lowest val_loss selection
-    ├── hobday.py           # Hobday 2016 MHW classification
-    └── metrics.py          # skill_by_phase() — onset/mid_event/no_mhw
-
-scripts/
-├── train.py                # Standard k-fold training
-├── train_partition.py      # Partition training (remote_only / local_only)
-├── eval_ig.py              # Integrated Gradients composite maps
-├── eval_onset_skill.py     # Onset-phase skill by partition mode
-├── ensemble_skill.py       # Multi-seed ensemble evaluation
-└── slurm/                  # SLURM submission scripts
-
-configs/
-├── kfold/TbotAtm.yaml      # TbotAtm (ptho_bot + ERA5) base config
-├── kfold/SSTAtm.yaml       # SSTAtm (to_anom + ERA5) base config
-├── partition/{remote,local}.yaml
-└── partition/{local,remote}/fold0-4.yaml
-
-scripts/analysis/           # Granger causality, thermal inertia, tau checks
-tests/                      # pytest: splits, masking, checkpoints
-archive/poster_egu2026/     # EGU 2026 poster figure scripts
-docs/narrative.md           # Scientific decisions log
-results/                    # gitignored; paper numbers in all_results.csv
+src/              model code — data loading, CNN-LSTM, XAI, utilities
+scripts/          training, evaluation, XAI runs; scripts/slurm/ for SLURM
+scripts/analysis/ exploratory analysis (Granger, thermal inertia, tau)
+configs/          experiment configs (kfold/, partition/)
+tests/            pytest suite
+docs/             narrative.md (decisions), data.md (pipeline + variables)
+archive/          EGU 2026 poster scripts
+results/          gitignored; paper numbers in all_results.csv
 ```
 
 ## Installation
@@ -67,10 +40,6 @@ python scripts/eval_onset_skill.py --mode remote_only
 
 ## Data
 
-Input: set `MHW_DATA_FILE` to the path of `merged_daily.nc` (see `.env.example`).
-
-Target: North Sea basin-mean `to_anom` (SST − climatological mean, ref 1985–2014),
-averaged at 0.1° resolution before regridding to 0.5°.
-MHW threshold: Hobday 2016 P90, 31-day circular smooth, applied at runtime.
+Set `MHW_DATA_FILE` to the path of `merged_daily.nc` (see `.env.example`).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full pipeline and conventions.

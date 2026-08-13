@@ -17,6 +17,15 @@ after that fold finishes. Never accumulate results and save at the end.
 **SLURM email**
 Set `SLURM_MAIL` env var before submitting. Never hardcode an email in submit scripts.
 
+## Code discipline
+- No silent fallbacks: if a value can't be parsed/found, raise an error with a
+  clear message — never default to 0.0, None, or "skip" without printing a warning.
+- No broad exception catching — let errors surface.
+- Vectorize: prefer PyTorch/NumPy/xarray batch operations over per-sample Python
+  loops, especially for IG/inference (the 2,400 core-hour loss on Aug 11 came from
+  an unbatched per-sample loop).
+- Don't add new dependencies to requirements.txt without asking first.
+
 ---
 
 ## Project structure
@@ -30,6 +39,7 @@ scripts/      train.py, train_partition.py, eval_*.py, ...
 scripts/slurm/ SLURM submit scripts
 scripts/analysis/ causal_triangulation.py, check_tau_methodology.py, thermal_inertia_test.py
 configs/      kfold/{TbotAtm,SSTAtm}.yaml, partition/{remote,local}.yaml, partition/local|remote/fold0-4.yaml
+              # naming: configs/{experiment_type}/{variant}.yaml
 tests/        test_splits.py, test_masking.py, test_checkpoints.py
 archive/      poster_egu2026/, old scripts
 ```
@@ -45,7 +55,12 @@ archive/      poster_egu2026/, old scripts
 | Phase-based skill metrics | `src/utils/metrics.py` (`skill_by_phase`) |
 | Paper numbers | `results/all_results.csv` |
 | Scientific decisions | `docs/narrative.md` |
+| Env var definitions | `.env.example` |
 
 ---
 
 **Before adding anything not explicitly requested — ask first.**
+**Before starting a task, ask me any questions you have.**
+**If you consider that there is a common and important rule that is not written here, suggest it**
+
+
