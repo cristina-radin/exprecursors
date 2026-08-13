@@ -34,9 +34,10 @@ scripts/
 configs/
 ├── kfold/TbotAtm.yaml      # TbotAtm (ptho_bot + ERA5) base config
 ├── kfold/SSTAtm.yaml       # SSTAtm (to_anom + ERA5) base config
-└── partition/{remote,local}.yaml
+├── partition/{remote,local}.yaml
+└── partition/{local,remote}/fold0-4.yaml
 
-analysis/                   # Granger causality, thermal inertia, tau checks
+scripts/analysis/           # Granger causality, thermal inertia, tau checks
 tests/                      # pytest: splits, masking, checkpoints
 archive/poster_egu2026/     # EGU 2026 poster figure scripts
 docs/narrative.md           # Scientific decisions log

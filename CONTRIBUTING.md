@@ -36,8 +36,8 @@ pre-commit install --hook-type pre-commit --hook-type pre-push
 | Run tests | `pytest tests/` |
 | Run pre-commit on all files | `pre-commit run --all-files` |
 | Train (kfold) | `python train.py --config configs/kfold/TbotAtm.yaml` |
-| Train (partition) | `python partition/train_partition.py --config configs/partition/remote.yaml --fold 0` |
-| Eval onset skill | `python partition/eval_onset_skill.py --mode remote_only` |
+| Train (partition) | `python scripts/train_partition.py --config configs/partition/remote.yaml --mode remote_only` |
+| Eval onset skill | `python scripts/eval_onset_skill.py --mode remote_only` |
 
 
 ## Data pipeline

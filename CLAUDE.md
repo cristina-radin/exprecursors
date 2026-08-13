@@ -28,8 +28,8 @@ src/xai/      integrated_gradients.py, grad_cam.py, utils.py
 src/utils/    checkpoints.py, hobday.py, metrics.py
 scripts/      train.py, train_partition.py, eval_*.py, ...
 scripts/slurm/ SLURM submit scripts
-configs/      kfold/{TbotAtm,SSTAtm}.yaml, partition/{remote,local}.yaml
-analysis/     causal_triangulation.py, granger.py, ...
+scripts/analysis/ causal_triangulation.py, check_tau_methodology.py, thermal_inertia_test.py
+configs/      kfold/{TbotAtm,SSTAtm}.yaml, partition/{remote,local}.yaml, partition/local|remote/fold0-4.yaml
 tests/        test_splits.py, test_masking.py, test_checkpoints.py
 archive/      poster_egu2026/, old scripts
 ```
