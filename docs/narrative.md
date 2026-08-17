@@ -55,23 +55,57 @@ Aug 16 2026._
      Interpretation of local_only > full.
      What remote_only onset skill implies for the narrative. -->
 
-> **⚠ SUPERSEDED — Full=0.860±0.031 DO NOT CITE**
+**Clean results (job 14199778, post-fix, seed=42, 5 folds, `merged_daily.nc`, arch=lstm_only):**
+
+| Partition | r (mean±std) | ratio vs Full |
+|-----------|-------------|---------------|
+| Full      | 0.852±0.082 | —             |
+| Remote    | 0.802±0.041 | 94.1%         |
+| Local     | 0.906±0.032 | 106.3%        |
+
+Local > Full: local SST signal alone outperforms the full input set — consistent
+with the short-range thermal inertia dominating 7-day predictability in the NS box.
+
+### Fold0 outlier — Full underperforms Remote (0.715 vs 0.812)
+
+fold0 test years [1995, 1997, 2003, 2004, 2014, 2019] include 3 of the
+8 highest-anomaly years in the 1993–2022 record (2003, 2014, 2019;
+mean max_anom 4.24°C vs 3.75°C for fold2/fold4). This alone would explain
+Full scoring lower here than in other folds — but does not by itself
+explain why Full < Remote specifically in this fold (Full ≥ Remote in
+all other 4 folds).
+
+Convergence diagnosis (val_loss gap between best checkpoint and final epoch, fold0 only):
+- Full: best_epoch=14, gap=0.057 (most severe overfitting)
+- Remote: best_epoch=26, gap=0.024
+- Local: best_epoch=16, gap=0.031
+
+All three show some overfitting in this fold, but severity ranks exactly opposite to
+model complexity: Full (most input variables) is most fragile, Remote (forced to rely
+on the consistent remote signal) is most stable. Likely mechanism: in extreme-anomaly
+years, Full's larger effective parameter space overfits more easily than the more
+constrained Remote/Local models — checkpoint selection (early stopping on val_loss)
+caught this before it got worse, but could not fully compensate.
+
+Not a bug, not a reason to rerun — but the mechanism (model richness + extreme-year
+fragility) is worth a sentence in the paper if the fold0 number is shown.
+
+---
+
+> ~~**⚠ SUPERSEDED — Full=0.860±0.031 DO NOT CITE**~~
 >
-> The Full baseline cited previously (r=0.860±0.031) was sourced from
-> `experiments/kfold/TbotAtm_lstmonly_fold0-4` (Jun 23 2026, PRE-FIX #21).
-> Forensic check: `data_dir` hardcoded to `merged_daily_deepSST.nc` in all
-> 5 configs; mtime=ctime=Jun 23 for all 15 checkpoints (no post-date
-> manipulation). The fix (ptho_bot anomaly, job 14070999) ran Jun 29 2026 —
-> 5 days 22 hours after these checkpoints were written.
+> ~~The Full baseline cited previously (r=0.860±0.031) was sourced from~~
+> ~~`experiments/kfold/TbotAtm_lstmonly_fold0-4` (Jun 23 2026, PRE-FIX #21).~~
+> ~~Forensic check: `data_dir` hardcoded to `merged_daily_deepSST.nc` in all~~
+> ~~5 configs; mtime=ctime=Jun 23 for all 15 checkpoints (no post-date~~
+> ~~manipulation). The fix (ptho_bot anomaly, job 14070999) ran Jun 29 2026 —~~
+> ~~5 days 22 hours after these checkpoints were written.~~
 >
-> The 93% ratio (Remote=0.802/Full=0.860) is INVALID: denominator
-> contaminated (pre-fix ptho_bot ≈ absolute temperature 7-8°C, not anomaly),
-> numerators Remote=0.802 and Local=0.906 are clean (Aug 11 2026, post-fix).
+> ~~The 93% ratio (Remote=0.802/Full=0.860) is INVALID: denominator~~
+> ~~contaminated (pre-fix ptho_bot ≈ absolute temperature 7-8°C, not anomaly),~~
+> ~~numerators Remote=0.802 and Local=0.906 are clean (Aug 11 2026, post-fix).~~
 >
-> Retraining in progress: `experiments/partition/TbotAtm_full_seed42_fold*`
-> (seed=42, 5 folds, `merged_daily.nc`, arch=lstm_only).
-> Submitted Aug 16 2026 — job 14199765 (array 0-4, booster partition).
-> Update this section when job completes.
+> Superseded by job 14199778 (Aug 17 2026). Kept for audit trail.
 
 ---
 

@@ -89,6 +89,10 @@ If `detect-secrets` flags a false positive (e.g. a hardcoded HPC path), allowlis
 DATA = "/some/sensitive/path/data.nc"  # pragma: allowlist secret
 ```
 
+> **Gotcha**: the hook scans *staged* content, not the file on disk. If you add the
+> pragma after running `git add`, you must `git add` the file again so the pragma
+> enters the index — otherwise the hook will still flag the old staged version.
+
 
 ## Testing
 
