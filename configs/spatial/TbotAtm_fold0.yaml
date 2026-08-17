@@ -25,4 +25,4 @@ ocean_variables:
 in_channels: 5
 seed: 42
 fold: 0
-output_dir: /p/project1/hai_1127/radin1/spatial_forecast/experiments/runs/TbotAtm_seed42_fold0  # pragma: allowlist secret
+output_dir: /p/project1/hai_1127/radin1/exprecursors/experiments/spatial/runs/TbotAtm_seed42_fold0  # pragma: allowlist secret

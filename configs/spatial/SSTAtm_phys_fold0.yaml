@@ -27,4 +27,4 @@ seed: 42
 fold: 0
 lambda_lap: 0.0
 mld_file: /p/project1/hai_1127/radin1/exprecursors/scripts_spatial/preprocessing/mld_monthly_weights.npy
-output_dir: /p/project1/hai_1127/radin1/spatial_forecast/experiments/phys/SSTAtm_phys_fold0_l0p0  # pragma: allowlist secret
+output_dir: /p/project1/hai_1127/radin1/exprecursors/experiments/spatial/phys/SSTAtm_phys_fold0_l0p0  # pragma: allowlist secret

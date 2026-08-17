@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 import xarray as xr
 
 DATA_NC = "/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc"
-RUNS_DIR = Path("/p/project1/hai_1127/radin1/spatial_forecast/experiments/runs")
+RUNS_DIR = Path("/p/project1/hai_1127/radin1/exprecursors/experiments/spatial/runs")
 VARSETS = ["Atm", "SSTAtm", "TbotAtm"]
 N_FOLDS = 5
 WINDOW = 60
