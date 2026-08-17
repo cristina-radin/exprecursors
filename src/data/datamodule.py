@@ -90,6 +90,46 @@ class LazyDataModule(pl.LightningDataModule):
                 f"test {n_years - n_train - n_val} yrs)"
             )
 
+        elif self.split_mode == "kfold":
+            fold = self.config.get("fold", 0)
+            n_folds = self.config.get("n_folds", 5)
+
+            target_years = np.array(
+                [
+                    int(full_ds.years[i + full_ds.window_size - 1 + full_ds.lead_time])
+                    for i in range(total_size)
+                ]
+            )
+            unique_years = np.unique(target_years)
+            n_years = len(unique_years)
+            # Use legacy RandomState for compatibility with Aug 11 checkpoints.
+            # The original (uncommitted) kfold code used np.random.RandomState,
+            # not default_rng. Changing this breaks split compatibility.
+            kfold_rng = np.random.RandomState(self.seed)
+            shuffled_years = kfold_rng.permutation(unique_years)
+
+            fold_size = n_years // n_folds
+            test_years = set(shuffled_years[fold * fold_size : (fold + 1) * fold_size])
+            remaining_years = [y for y in shuffled_years if y not in test_years]
+            n_val = int(self.val_ratio * n_years)
+            val_years = set(remaining_years[:n_val])
+            train_years = set(remaining_years[n_val:])
+
+            train_indices = [
+                i for i in range(total_size) if target_years[i] in train_years
+            ]
+            val_indices = [i for i in range(total_size) if target_years[i] in val_years]
+            test_indices = [
+                i for i in range(total_size) if target_years[i] in test_years
+            ]
+
+            split_label = (
+                f"K-fold  (fold={fold}/{n_folds}, "
+                f"train={len(train_years)} yrs, "
+                f"val={len(val_years)} yrs, "
+                f"test={len(test_years)} yrs)"
+            )
+
         elif self.split_mode == "random":
             train_size = int(self.train_ratio * total_size)
             val_size = int(self.val_ratio * total_size)

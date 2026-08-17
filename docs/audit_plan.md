@@ -9,7 +9,7 @@ phase, not before or after — each memory doc is tied to the code era
 it documents.
 
 ## Reference documents (read first, always up to date)
-- docs/known_issues.md — the 14-point bug checklist. Add new entries here,
+- docs/known_issues.md — the 22-point bug checklist. Add new entries here,
   never delete without discussion.
 - docs/data.md — verified pipeline + variable definitions
 - CONTRIBUTING.md — process
@@ -252,37 +252,261 @@ trained on a fundamentally different variable. Documented as known_issues.md
 Applied before Phase 4 audit. Audit of the rest of these scripts not yet done.
 
 ### Code
-- [ ] scripts/train_partition.py
-- [ ] scripts/eval_onset_skill.py
-- [ ] scripts/ig_masked_batched.py + ig_masked_merge.py
-- [ ] scripts/persistence_baseline.py
-- [ ] scripts/persistence_remote_sst.py
-- [ ] scripts/analysis/causal_triangulation.py
-- [ ] scripts/analysis/check_tau_methodology.py
-- [ ] scripts/analysis/thermal_inertia_test.py
-- [ ] scripts/eval_ig.py
-- [ ] scripts/composite_ig_signed.py
+- [x] scripts/train_partition.py — **CONFIRMED** (indirect evidence only)
+      Training log for job 14193976 NOT FOUND in repo. Indirect evidence
+      strongly supports post-fix data: checkpoints dated Aug 11, 2026 (6
+      weeks after June 29 fix); merged_daily_deepSST.nc does not exist —
+      LazyDataset would raise FileNotFoundError if configs pointed there;
+      eval log (job 14194729, Aug 12) shows ptho_bot mean=0.0186,
+      std=0.2757 (anomaly scale, not absolute temperature ~5-15°C). Cannot
+      confirm from surviving artifacts; reasoning by exclusion.
+      #13: CLEAN — data_dir:"" in current configs → MHW_DATA_FILE env var.
+      #16: CLEAN — all arch params from config.get() (L138-146).
+      #17: CLEAN — CSVLogger, no WandbLogger (L171). #8: N/A (Lightning).
+
+- [x] scripts/eval_onset_skill.py — **CONFIRMED** (known limitation, NF-P4-F RESOLVED)
+      #9: CLEAN — full Hobday in L64-119 (load_ns_p90 + apply_hobday +
+      P90 threshold). #11: CLEAN — val_loss() L245-247 returns float("inf")
+      on regex failure. #16: CLEAN — all config.get() (L130-138).
+      #8: per-sample inference loop (L152-173) — flag; no IG in this script.
+      Known limitation: persistence baseline in skill_by_phase() (L182-202)
+      computed over ALL test samples, not conditioned on the 84 onset
+      indices — open item from Aug 13, must be addressed before the onset
+      skill result can be cited.
+      NF-P4-F RESOLVED (Aug 16 2026): L233-235 path corrected from
+      partition/configs/{folder}/fold{fold}.yaml to
+      configs/partition/{folder}/fold{fold}.yaml. Dry-run confirms 10/10
+      configs found (remote fold0-4, local fold0-4).
+
+- [x] scripts/eval_onset_persistence.py — **NEW (post-audit, Aug 16 2026)**
+      Written to close the onset/persistence open item (NF-P4-F blocker).
+      Loads existing NPZ files from eval_onset_skill.py (no inference);
+      computes lag-7 persistence (persist[i] = trues[i-7] within each fold's
+      consecutive test series); pools 84 onset samples across 5 folds;
+      computes Pearson r with 95% Fisher z-transform CI for model and
+      persistence. No boundary-NaN issues (0 onset days in first 7 positions
+      of any fold). Full results in docs/narrative.md Onset skill section.
+
+- [x] scripts/ig_masked_batched.py — **CONFIRMED** (NF-P4-B latent,
+      non-triggered)
+      NF-P4-B: LOCAL best_ckpt() at L40-49, not importing canonical from
+      src/utils/checkpoints.py. Empirical check of all SSTAtm_lstmonly_
+      gnll_masked checkpoint names (Aug 2026 full set):
+        cnn-lstm-epoch=XX-val_loss=Y[.ckpt | -v1.ckpt]
+      Local regex (-?[0-9]+\.[0-9]+) correctly matches all real filenames
+      including GNLL negatives (e.g. val_loss=-0.0076, -0.1087). Fallback
+      to 0.0 NEVER triggered for these files. Additional nuance: local
+      version does not exclude -v1 duplicates (canonical does), so min()
+      is non-deterministic when two files tie on val_loss; since both
+      represent the model at that loss value, result validity is unaffected.
+      Existing masked-IG results are citable.
+      #8: FIXED — batch loop at L166. #16: CLEAN — config.get() L54-62.
+      #21: N/A (SSTAtm experiment, not TbotAtm).
+      Phase 5: import canonical best_ckpt() (see Phase 5 note below).
+
+- [x] scripts/ig_masked_merge.py — **CONFIRMED**
+      No model loading. DATA_FILE from env var (L28) — CLEAN #13.
+      land_mask.astype(bool) (L116) — CLEAN #2. Clean on all 22 points.
+
+- [x] scripts/persistence_baseline.py — **CONFIRMED**
+      --data required CLI arg — CLEAN #13. Clean on all 22 points.
+      NF-P4-C (cosmetic): L155 label "CNN-LSTM + GNLL" hardcoded — stale
+      if model is retrained; not a computation bug.
+
+- [x] scripts/persistence_remote_sst.py — **CONFIRMED**
+      DATA_FILE from env var (L28) — CLEAN #13. L59 comment confirms
+      land_mask=1 means ocean — CLEAN #2.
+      NF-P4-C (cosmetic): L123/L140 r = 0.807 ± 0.038 hardcoded — stale
+      if model is retrained; not a computation bug.
+
+- [x] scripts/analysis/causal_triangulation.py — **CONFIRMED**
+      #13: CLEAN — DATA_FILE from env var (L18).
+      #10: CONFIRMED in results — triangulation_results.csv shows rho≈1.0
+      for all drivers (CCM saturation per known issue #10, as expected).
+      #11: except Exception path (L95-107) present but NEVER triggered in
+      current run — granger_fstats.csv shows all granger_lag > 0 (values:
+      1, 1, 1, 2, 2, 3) and no granger_p=1.0 rows. Result not contaminated.
+      L287: warnings.filterwarnings("ignore") suppresses all warnings
+      (anti-pattern, not a bug affecting results).
+      F-stats non-comparability disclaimer ABSENT from code: the agreement
+      that "F-stats are not comparable across variables for ranking, only
+      for direction" exists in conversation and project_granger_
+      methodology.md but has zero occurrences in the script itself (grep
+      confirmed: no "comparable/ranking/caveat/direction/F-stat").
+      Documentation gap only; does not change the CSV numbers.
+
+- [x] scripts/analysis/check_tau_methodology.py — **CONFIRMED** (NF-P4-E)
+      #13: CLEAN — DATA_FILE from env var (L32/L41).
+      #2: CLEAN — ocean = ds["land_mask"].values.astype(bool) (L61).
+      #21: N/A — pure ACF analysis on to_anom, no model loading.
+      L428: print("Loading NS to_anom from merged_daily.nc ...") confirms
+      correct data file at runtime.
+      NF-P4-E: L389-393 boxplot bug — data_box uses loop variable `late`
+      (= tau_late, full NS series after loop ends) instead of tau_n_late /
+      tau_s_late. North-late and South-late boxes in tau_check2_boxplot.png
+      are IDENTICAL (both show full-NS tau). Printed Check 2 numbers used
+      in the current narrative (North -46d, South -31d) come from text
+      output (L278-296) and are CORRECT / UNAFFECTED. Spatial maps correct.
+      tau_check2_boxplot.png MUST be regenerated before any paper use.
+
+- [x] scripts/analysis/thermal_inertia_test.py — **NEEDS_RERUN**
+      NF-P4-B: LOCAL best_ckpt() (L156-165), L163 returns 0.0 on failure —
+      same violation as ig_masked_batched.py; same canonical fix applies.
+      NF-P4-D (#22): patched_config_path() (L168-193) silently routes to
+      merged_daily_deepSST_OLD.nc when multiseed configs' data_dir
+      (merged_daily_deepSST.nc) is missing. CONFIRMED ACTIVE: all inspected
+      multiseed configs have data_dir pointing to the non-existent
+      merged_daily_deepSST.nc → fallback to _OLD (pre-fix absolute ptho_bot,
+      issue #21). Step 2 (per-year IG computation) has NEVER completed —
+      no ig_peryear or ig_tbot_peryear files found anywhere in experiments/
+      (confirmed by find). Risk detected before contamination; no existing
+      result is affected.
+      #16: CLEAN — L199-207 all config.get(). #8: per-sample IG loop
+      (L287-298) — flag.
+
+- [x] scripts/eval_ig.py — **CONFIRMED**
+      Pre-audit is_land fix applied (L221: full_ds.is_land.numpy()).
+      #9: CLEAN — full Hobday in L45-97 (load_ns_p90 + apply_hobday +
+      P90 threshold). #15: CLEAN post-fix.
+      #16: CLEAN — config.get() (L121-130).
+      #8: per-sample loops for both inference (L162-176) AND IG (L237-248)
+      — performance flag, does not affect correctness.
+      L143: xr.open_dataset(config["data_dir"]) for lat/lon — fails loudly
+      if data_dir:"". Reference implementation for MHW/non-MHW signed IG
+      attribution with correct Hobday labels.
+
+- [x] scripts/composite_ig_signed.py — **NEEDS_RERUN**
+      Pre-audit is_land fix applied (L132).
+      #9/#19 CONFIRMED: L105 mhw_idx = np.where(trues > thr)[0] with
+      default thr=0.0 — uses raw normalised target, not Hobday MHW. ~50%
+      of all days labelled MHW (Hobday expected ~10%). All MHW/non-MHW
+      signed attribution results from this script are invalid.
+      #15: CLEAN post-fix. #16: CLEAN. #8: per-sample inference (L91-100).
+      Note: any claim of MHW/non-MHW asymmetry in signed IG attributions
+      in memory docs (project_ig_peryear_decomposition.md, poster content)
+      must be re-verified using eval_ig.py (correct Hobday version) once
+      the corrected-data model is available.
 
 ### Memory
-- [ ] project_paper_narrative_aug2026.md
-- [ ] project_open_items_aug2026.md
-- [ ] project_granger_methodology.md
-- [ ] project_results_full_jul2026.md
-- [ ] project_input_variables.md
-- [ ] project_target_definition.md
-- [ ] project_results_status.md
-- [ ] project_results_summary.md
-- [ ] project_overview.md
-- [ ] project_reviewer_responses.md
 
-### Known open item (carried from Aug 13 session)
-Onset skill with corrected MHW definition shows r≈0.02-0.03 (n=84),
-contradicting the earlier (pre-fix) result that anchored the paper
-narrative. Needs: persistence r conditioned on the same 84 onset samples,
-to know if the model beats/ties/loses persistence there. This must be
-resolved before project_paper_narrative_aug2026.md can be marked KEEP.
+> **CRITICAL — Gulf Stream vs NS T_bottom perturbation result (Jun 1 2026):**
+> The finding that "GS T_bottom masking slightly IMPROVES skill while NS T_bottom
+> masking DROPS skill" — used as the empirical basis for the IG-vs-causality
+> distinction — was produced by a pre-#21 model (absolute ptho_bot, before the
+> June 29 fix). The qualitative direction (GS not causally necessary, NS T_bottom
+> is) may survive re-verification but has NOT been confirmed with the corrected-data
+> model. Do not present this as verified fact in the supervision meeting without
+> this caveat.
 
-**Status: NOT STARTED**
+> **GNLL fold-identical bug (for the record):** A "Full TbotAtm GNLL" experiment
+> (5 seeds × 5 folds) was discarded Aug 16 because 3 folds showed r=0.886
+> identical to 3 decimal places (val_loss overfit at epoch 7). This bug occurred
+> ONLY in that discarded experiment — it does NOT affect SSTAtm_lstmonly_gnll
+> (n=25, all distinct, confirmed from metrics.csv Aug 16) or TbotAtm MSE partition
+> (5 folds, all distinct).
+
+- [x] project_paper_narrative_aug2026.md — **UPDATE applied**
+      Numbers updated: SSTAtm GNLL pair r=0.865/r=0.807 replaced with canonical
+      TbotAtm MSE partition numbers (Full=0.860±0.031, Remote=0.802±0.037,
+      Local=0.906±0.029, seed42 5 folds, post-fix Aug 11 2026). The 93% ratio
+      (0.802/0.860 = 93.3%) is unchanged. Four reasons for TbotAtm over SSTAtm:
+      (1) best model; (2) post-fix (#21 clean); (3) directly measures partition;
+      (4) TbotAtm includes ptho_bot, the variable central to the reframed narrative
+      — citing SSTAtm would answer the wrong question even though ratio matches.
+      Note on discarded TbotAtm GNLL added (fold-identical bug, not in audited exps).
+      Remaining open: Step 3 of narrative arc (thermal_inertia IG per decade) is
+      BLOCKED on NF-P4-D fix. Onset skill for partition models needs 5-fold aggregate.
+
+- [x] project_open_items_aug2026.md — **UPDATE**
+      Scientific decisions valid (Granger methodology, onset table, Granger+IG
+      complementarity). "Jobs activos" section stale: partition jobs 14194108/09 are
+      COMPLETE — TbotAtm_remote_seed42_fold0-4 and TbotAtm_local_seed42_fold0-4 all
+      have metrics.csv (confirmed from disk Aug 16). Job 14194129 (ig_hobday signed
+      IG): status not confirmed from surviving artifacts. Onset skill table (SSTAtm
+      r=0.245, TbotAtm r=0.201 at onset vs persist r=0.111): from spatial_forecast/
+      eval/figures/ — origin model independent of scalar kfold. TbotAtm row potential
+      #21 caveat (spatial model training history not verified). Must refresh "Jobs
+      activos" section and add partition fold-level results.
+
+- [x] project_granger_methodology.md — **KEEP**
+      Disclaimer text ("F-stats not directly comparable in magnitude across variables")
+      correct and complete. F-stat table consistent with granger_fstats.csv verified in
+      Phase 4 code audit (v10 F=2166 lag1, msl F=1054 lag2, u10 F=618 lag1, ssr F=592
+      lag1, Tbot_NS F=137 lag2, Tbot_GS F=27 lag3). Tbot autocorrelation finding
+      (GS lag60 ACF=0.837 > NS=0.719) consistent with check_tau_methodology.py text
+      output (L278-296, correct per NF-P4-E analysis). Disclaimer absent from code
+      itself (noted in Phase 4 code audit — documentation gap only). Granger+IG
+      complementarity narrative valid and uncontradicted by audit.
+
+- [x] project_results_full_jul2026.md — **KEEP_AS_HISTORICAL**
+      Read from actual metrics.csv files Jul 7, 2026. TbotAtm numbers (kfold
+      r=0.860, multi-seed r=0.863±0.041, GNLL r=0.871±0.036, lead sweep all leads)
+      are #21-flagged: kfold TbotAtm configs have data_dir: merged_daily_deepSST.nc;
+      if runs completed before June 19 2026 (rename to _OLD), ptho_bot was absolute
+      temperature. Individual kfold checkpoint dates not verified. Do not cite any
+      TbotAtm number from this doc without re-verification on corrected-data model.
+      SSTAtm, Atm, and masked r=0.807±0.038 (93% skill retained) are CLEAN for #21.
+      GNLL fold-identical bug did NOT affect SSTAtm GNLL (r=0.865 ± 0.022 in this
+      doc accurate — confirmed from metrics.csv Aug 16). Spatial forecast spatial r≈0.004
+      (land_mask bug) pre-dates Jul 2026 bug fix; post-fix results not in this doc.
+
+- [x] project_input_variables.md — **UPDATE applied**
+      to_anom definition corrected: was "SST − P90_climatology(DOY±5days) CDO
+      ydrunpctl,90,5" — wrong (#1). Fixed to "SST − mean_clim(DOY) CDO ydaysub",
+      matching project_target_definition.md (authoritative corrected doc).
+      Confirmed from merged_daily.nc: to_anom mean=0.091°C (SST-mean_clim + warming
+      trend); SST-P90 would give mean≈−0.7°C. All other content clean.
+
+- [x] project_target_definition.md — **KEEP**
+      Already corrected Aug 2026. to_anom = SST − mean_clim(DOY), CDO pipeline
+      verified (ydrunmean,11 → ydaysub → to_anom; ydrunpctl,90,11 → p90_thresh).
+      Authoritative definition, consistent with known_issues.md #1 and code audit.
+      p90_thresh stored without 31-day runtime smooth — consistent with known
+      issue #7 (smooth applied only in load_ns_p90() at evaluation time).
+
+- [x] project_results_status.md — **KEEP_AS_HISTORICAL**
+      April 2026 snapshot, 118 days old. Triple contamination:
+      #9/#19 — to_anom > 0 threshold (MHW days 51.2%, ETS/CSI/POD/FAR meaningless);
+      #21 — absolute ptho_bot;
+      #12 — old naming (deepSST_layers4 vs TbotAtm).
+      Do not cite any number from this doc. Historical record of April 2026 state only.
+
+- [x] project_results_summary.md — **KEEP_AS_HISTORICAL**
+      Contains two-era data. April 2026 XAI conclusions (#1-7): #21-flagged. GS
+      hotspot claim (#14, superseded by perturbation) and ptho_bot +2.6%/decade
+      regime shift are NOT citable. Multi-seed ensemble skill (r=0.904, ETS=0.612,
+      Apr 2026): #9/#19 + #21. Jun 1 perturbation (GS vs NS T_bottom): pre-fix
+      (#21) — see CRITICAL NOTE at top of Memory section. Qualitative direction may
+      survive re-verification. Superseded as scientific reference by
+      project_paper_narrative_aug2026.md.
+
+- [x] project_overview.md — **UPDATE**
+      April 2026 snapshot, 118 days old. Objective ("MHW predictability via XAI,
+      CNN-LSTM + Attention, 60d window, lead=7, NS target") and scientific question
+      ("which signals in North Atlantic precede NS thermal anomaly?") still valid.
+      Stale: naming (#12: noSST/SST/deepSST → Atm/SSTAtm/TbotAtm); "Loss: MSELoss"
+      (GNLL now preferred); code section references ARCHIVE'd run_xai.py (#20);
+      "XAI aplicado (todos completados)" refers to pre-fix April 2026 XAI; WandbLogger
+      in code description (#17); all skill numbers from pre-fix April 2026 model.
+      Must update before writing methods/intro section of paper.
+
+- [x] project_reviewer_responses.md — **KEEP_AS_HISTORICAL**
+      Q1 (block-year split, 31 test years across 14 seeds): methodologically valid,
+      still the correct answer for paper. Q2 (MSE loss → smooth conditional mean):
+      technically valid; GNLL now preferred (adds uncertainty) but smoothness point
+      stands. Q3 (Gulf Stream vs NS T_bottom perturbation, Jun 1): pre-fix (#21) —
+      see CRITICAL NOTE above. Qualitative direction (NS T_bottom matters, GS doesn't)
+      must not be stated as confirmed without re-running on corrected-data model.
+
+### Known open item — CLOSED (Aug 16 2026)
+Onset skill pooled across 5 folds and persistence baseline computed by
+eval_onset_persistence.py. NF-P4-F (stale path in eval_onset_skill.py) RESOLVED.
+Results: neither model (r=0.006–0.093) nor lag-7 persistence (r=−0.067) predict
+MHW onset at n=84 with statistical power (need |r|>0.21 for p<0.05).
+See docs/narrative.md Onset skill section for full table and interpretation.
+
+**Status: COMPLETE — code: 9 CONFIRMED (incl. 1 new post-audit), 2 NEEDS_RERUN;
+memory: 2 UPDATE applied, 2 UPDATE, 2 KEEP, 4 KEEP_AS_HISTORICAL**
 
 ---
 
@@ -290,6 +514,160 @@ resolved before project_paper_narrative_aug2026.md can be marked KEEP.
 Only for scripts confirmed as feeding results/all_results.csv after
 Phase 4 is complete. Not started. Do not begin early — polishing
 readability of a script that might still get archived wastes effort.
+
+Consolidation note (to apply in Phase 5 rewrite): 4 scripts
+(ensemble_skill.py, run_xai_ensemble.py, ig_masked_batched.py,
+thermal_inertia_test.py) re-implement best_ckpt() locally instead of
+importing src/utils/checkpoints.py. The canonical version uses
+float("inf") on failure (correct) and excludes -v1/-v2 duplicates.
+Replace all local copies with the import in the Phase 5 pass.
+
+---
+
+## Fase 4-bis — spatial_forecast (Jun–Aug 2026, parallel experiment)
+
+Self-contained experiment directory at `/p/project1/hai_1127/radin1/spatial_forecast/`.
+NOT integrated into exprecursors repo. Architecture: CNN encoder (per frame) →
+ConvLSTM → decoder → 2D to_anom field (141×201). Audited Aug 16–17 2026.
+
+All 9 scripts read in full. Dry-run performed (CPU login node, forward pass shape
+verified [2,1,16,20], physics loss verified). All imports clean.
+
+Data file confirmed: `merged_daily.nc` — both land masks present (verified via
+`data_vars`: `land_mask` + `land_mask_tbottom`, 572 pixels differ, same 1=ocean
+convention — see known_issues.md #2 note added Fase 4-bis).
+
+### Cross-cutting: hardcoded data paths (LOW — standalone experiment)
+All 9 scripts hardcode `DATA_FILE` / `DATA_NC` / `MASK_FILE` as the absolute
+path `/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc`.
+Path is correct (post-fix file). The exprecursors `MHW_DATA_FILE` env-var
+convention does not apply to this standalone experiment; the hardcoded path
+is acceptable within JUWELS. Not a correctness bug.
+
+### Cross-cutting: NaN bug resolved (NF-S-2, RESOLVED — #24)
+Issue #24 absent in current code. `dataset_spatial.py` lines 128–131:
+`pix_std[self.land_mask] = 1.0` → `nan_to_num(pix_std, nan=1.0)` → `clamp(min=1e-4)`.
+The Jun 25–30 runs had "Target std (ocean mean): nan" from an earlier version
+without these guards (deleted Aug 16 per #24). Current valid runs (Jul–Aug 2026)
+print a finite std.
+
+### New findings
+
+**NF-S-1** (MEDIUM — instance of #11): `dataset_spatial.py` lines 55–56.
+Silent fallback `self.land_mask_tbottom = self.land_mask` when `land_mask_tbottom`
+not in dataset. No warning printed. In production, `merged_daily.nc` DOES contain
+`land_mask_tbottom` (confirmed via `data_vars`) — fallback is NEVER triggered with
+the current file. Latent bug: if the data file were replaced without this variable,
+`ptho_bot` would silently receive the SST mask (wrong for 572 coastal pixels) with no
+log or error. Fix: add `warnings.warn()` or `print()` in the else branch.
+No existing result is affected.
+
+**NF-S-3** (MEDIUM — instance of #23): `train_spatial.py` line 38 and
+`train_spatial_phys.py` line 40. `rng_fold = np.random.default_rng(0)` — fold
+assignment seed hardcoded as 0, independent of the config `seed` parameter. All
+existing runs share the same fold-year assignment (consistent internally) but the
+`seed` field in config controls only val/train shuffling, not test year assignment.
+This is undocumented. Fix: expose as `config.get("fold_seed", 0)` and add a comment.
+
+**NF-S-4** (LOW — DRY): `build_splits` duplicated verbatim between `train_spatial.py`
+and `train_spatial_phys.py`. If one is patched and the other is not, fold assignments
+diverge silently. Fix: extract to shared `utils_spatial.py` in Phase 5 pass.
+
+**NF-S-5** (HIGH — instance of #9/#19): `eval/mhw_onset_skill.py` lines 117–118.
+```python
+is_mhw_tgt = tgt  > 0   # (N, H, W)
+is_mhw_inp = to_t > 0   # (N, H, W)
+```
+`tgt` is the per-pixel normalised regression target (to_anom / pix_std). `> 0` on
+the normalised scale labels ~31.5% of target pixels as MHW (confirmed empirically:
+SSTAtm_seed42_fold0 test_targets.npy). Hobday expected ~10%. No p90(DOY) threshold,
+no persistence ≥5d, no gap-merging. Onset / mid-event / no-MHW pixel-level skill
+maps computed against this criterion are physically meaningless and cannot be cited.
+Fix: replace with Hobday filter applied per pixel using `p90_thresh(DOY)` from
+climatology — this requires a non-trivial 2D extension of the scalar `apply_hobday`.
+
+**NF-S-6** (LOW — instance of #11): `model_spatial_phys.py` lines 71–73. Silent
+fallback from MLD-weighted MSE to plain `_masked_mse` when `self.mld_weights is None`.
+Prevented in practice by `train_spatial_phys.py` lines 93–97 (RuntimeError if
+`mld_file` not provided). Latent but not triggered; no existing result affected.
+
+**NF-S-7** (LOW): `model_spatial_phys.py` val_loss = MLD-MSE + λ_lap × Laplacian.
+Composite metric: checkpoint val_loss values are not comparable across runs with
+different `lambda_lap`. Not a bug; must be noted when comparing physics vs standard
+checkpoints or when interpreting best_ckpt() selections across phys configs.
+
+### Per-script verdicts
+
+- [x] `dataset_spatial.py` — **NEEDS_FIX** (NF-S-1)
+      #1: CLEAN — target = `ds["to_anom"]` line 64 (correct variable, post-fix).
+      #2: CLEAN — lines 46–49: explicit `lm=1→ocean`, `ocean_mask=tensor(lm)` (True=ocean),
+        `land_mask=tensor(~lm)` (True=land); `land_mask_tbottom` handled lines 52–54.
+      #11: NF-S-1 — line 55–56 silent fallback (latent; not triggered in production).
+      #21: CLEAN — DATA_FILE hardcoded to merged_daily.nc (post-Jun-29 fix).
+      #24: NF-S-2 RESOLVED — lines 128–131 NaN guard confirmed present.
+      All other issues: N/A.
+
+- [x] `dataset_spatial_phys.py` — **CONFIRMED**
+      24-line thin subclass: appends `month` to return tuple, no new logic.
+      All relevant checks inherit from `dataset_spatial.py` verdict above.
+
+- [x] `model_spatial.py` — **CONFIRMED**
+      CNN encoder → ConvLSTM → decoder (225 lines). SpatialLightningModule with
+      `_masked_mse` using `ocean_mask` (True=ocean, from dataset).
+      #2: CLEAN — ocean_mask used correctly throughout.
+      #4: CLEAN — MSELoss only, no GNLL/MSE confusion.
+      #11: No silent fallbacks in main computation path.
+      All other issues: N/A.
+
+- [x] `model_spatial_phys.py` — **CONFIRMED** (NF-S-6, NF-S-7 LOW)
+      PhysicsLightningModule: MLD-weighted MSE + λ_lap × Laplacian (126 lines).
+      NF-S-6 (LOW, #11): silent fallback at line 71–73 blocked by train-script guard.
+      NF-S-7 (LOW): composite val_loss not directly comparable across λ values.
+      All 24 issues otherwise N/A or CLEAN.
+
+- [x] `train_spatial.py` — **NEEDS_FIX** (NF-S-3)
+      #21: CLEAN — DATA_FILE = merged_daily.nc.
+      #23: NF-S-3 — line 38: `rng_fold = np.random.default_rng(0)` (fold seed hardcoded).
+      NF-S-4 (LOW): `build_splits` duplicated from train_spatial_phys.py.
+      All other issues: N/A.
+
+- [x] `train_spatial_phys.py` — **NEEDS_FIX** (NF-S-3)
+      #21: CLEAN — DATA_FILE = merged_daily.nc.
+      #23: NF-S-3 — line 40: same `rng_fold = np.random.default_rng(0)`.
+      NF-S-4 (LOW): `build_splits` duplicated from train_spatial.py.
+      All other issues: N/A.
+
+- [x] `preprocessing/compute_mld_weights.py` — **CONFIRMED**
+      #2: CLEAN — `land_mask=1→ocean`; mask inverted before use; explicit comment.
+      MASK_FILE hardcoded (merged_daily.nc, correct).
+      #11: No silent fallbacks.
+      All other issues: N/A.
+
+- [x] `eval/persistence_baseline_spatial.py` — **CONFIRMED**
+      #2: CLEAN — `land_mask=1 means OCEAN` at line 62; correctly inverted.
+      #9/#19: CLEAN — computes lag-1 persistence (MSE-based), no MHW classification.
+      DATA_FILE hardcoded (merged_daily.nc, correct).
+      All other issues: N/A.
+
+- [x] `eval/mhw_onset_skill.py` — **NEEDS_FIX** (NF-S-5)
+      #9/#19: NF-S-5 (HIGH) — lines 117–118: `tgt > 0` criterion, 31.5% pixels
+      flagged vs Hobday expected ~10%. No p90(DOY), no persistence filter.
+      All onset/mid-event/no-MHW skill maps from this script are invalid.
+      #2: CLEAN — ocean_mask loaded from dataset (True=ocean), applied correctly.
+      DATA_NC hardcoded at line 29 (merged_daily.nc, correct).
+      All other issues: N/A.
+
+### Overall
+5 CONFIRMED | 4 NEEDS_FIX | 0 ARCHIVE | 0 NEEDS_RERUN
+
+Priority fix order before any spatial onset maps are cited:
+1. **NF-S-5** (HIGH): `mhw_onset_skill.py` — fix MHW criterion to Hobday p90 per
+   pixel + persistence. All current onset/mid-event maps are invalid.
+2. **NF-S-3** (MEDIUM): Expose fold_seed in config; document what `seed` controls.
+3. **NF-S-1** (MEDIUM): Add warning in `dataset_spatial.py` else branch.
+4. **NF-S-4** (LOW): Extract shared `build_splits` in Phase 5 pass.
+
+**Status: COMPLETE (confirmed Aug 17 2026) — 5 CONFIRMED | 4 NEEDS_FIX | 0 ARCHIVE | 0 NEEDS_RERUN**
 
 ---
 

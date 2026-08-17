@@ -121,6 +121,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--mode", required=True, choices=list(MODE_MAP.keys()))
+    parser.add_argument("--fast_dev_run", type=int, default=0)
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -168,9 +169,28 @@ def main():
         LossCurvePlotCallback(output_dir),
     ]
 
-    from pytorch_lightning.loggers import CSVLogger
+    import os
 
-    logger = CSVLogger(save_dir=str(output_dir), name="logs")
+    from pytorch_lightning.loggers import WandbLogger
+
+    wandb_entity = os.environ.get("WANDB_ENTITY")
+    wandb_project = os.environ.get("WANDB_PROJECT")
+    if not wandb_entity or not wandb_project:
+        raise RuntimeError(
+            "WANDB_ENTITY and WANDB_PROJECT must be set. "
+            "Add them to .env or export before running."
+        )
+    fold = config.get("fold", 0)
+    seed = config.get("seed", 42)
+    run_name = f"{args.mode}_fold{fold}_seed{seed}"
+    logger = WandbLogger(
+        entity=wandb_entity,
+        project=wandb_project,
+        name=run_name,
+        save_dir=str(output_dir),
+        mode=os.environ.get("WANDB_MODE", "online"),
+        config=config,
+    )
 
     trainer = pl.Trainer(
         max_epochs=config["max_epochs"],
@@ -179,6 +199,7 @@ def main():
         accelerator="auto",
         devices="auto",
         num_sanity_val_steps=0,
+        fast_dev_run=args.fast_dev_run if args.fast_dev_run > 0 else False,
     )
 
     trainer.fit(lightning_module, datamodule=datamodule)

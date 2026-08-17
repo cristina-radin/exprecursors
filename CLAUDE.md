@@ -30,6 +30,9 @@ Set `SLURM_MAIL` env var before submitting. Never hardcode an email in submit sc
 
 ## Project structure
 
+Two parallel pipelines share the same repo, data file, and results table:
+
+### Scalar pipeline (NS point target)
 ```
 src/data/     dataset.py, datamodule.py, masking.py
 src/models/   cnn_lstm.py
@@ -38,11 +41,23 @@ src/utils/    checkpoints.py, hobday.py, metrics.py
 scripts/      train.py, train_partition.py, eval_*.py, ...
 scripts/slurm/ SLURM submit scripts
 scripts/analysis/ causal_triangulation.py, check_tau_methodology.py, thermal_inertia_test.py
-configs/      kfold/{TbotAtm,SSTAtm}.yaml, partition/{remote,local}.yaml, partition/local|remote/fold0-4.yaml
-              # naming: configs/{experiment_type}/{variant}.yaml
+configs/kfold/   {TbotAtm,SSTAtm}.yaml
+configs/partition/ {remote,local}.yaml, local|remote/fold0-4.yaml
 tests/        test_splits.py, test_masking.py, test_checkpoints.py
-archive/      poster_egu2026/, old scripts
 ```
+
+### Spatial pipeline (2D to_anom field target)
+```
+src_spatial/  dataset_spatial.py, dataset_spatial_phys.py,
+              model_spatial.py, model_spatial_phys.py
+scripts_spatial/           train_spatial.py, train_spatial_phys.py
+scripts_spatial/eval/      mhw_onset_skill.py, persistence_baseline_spatial.py
+scripts_spatial/preprocessing/ compute_mld_weights.py
+configs/spatial/ SSTAtm_fold0.yaml, TbotAtm_fold0.yaml, SSTAtm_phys_fold0.yaml
+```
+Experiment outputs (checkpoints, test_preds.npy) live in:
+`/p/project1/hai_1127/radin1/spatial_forecast/experiments/` (heavy, not in git).
+Both pipelines share: `docs/known_issues.md`, `results/all_results.csv`.
 
 ## Where things live (read the file, don't reimplement)
 
@@ -53,6 +68,9 @@ archive/      poster_egu2026/, old scripts
 | Checkpoint selection | `src/utils/checkpoints.py` (`best_ckpt`) |
 | Hobday MHW classification | `src/utils/hobday.py` (`load_ns_p90`, `apply_hobday`) |
 | Phase-based skill metrics | `src/utils/metrics.py` (`skill_by_phase`) |
+| Spatial dataset | `src_spatial/dataset_spatial.py` |
+| Spatial model (standard) | `src_spatial/model_spatial.py` |
+| Spatial model (physics) | `src_spatial/model_spatial_phys.py` |
 | Paper numbers | `results/all_results.csv` |
 | Scientific decisions | `docs/narrative.md` |
 | Env var definitions | `.env.example` |

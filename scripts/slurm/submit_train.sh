@@ -27,7 +27,7 @@ module load Stages/2025
 module load GCCcore/.13.3.0
 module load Python/3.12.3
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_DIR="${SLURM_SUBMIT_DIR}"
 source "${REPO_DIR}/venv/bin/activate"
 source "${REPO_DIR}/.env" 2>/dev/null || true
 

@@ -1,0 +1,28 @@
+data_dir: /p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc
+window_size: 60
+lead_time: 7
+clim_ref_start: 1985
+clim_ref_end: 2014
+clim_window: 5
+enc_channels: 128
+convlstm_hidden: 64
+dropout: 0.2
+learning_rate: 0.0001
+batch_size: 4
+max_epochs: 200
+n_folds: 5
+val_ratio: 0.15
+num_workers: 4
+normalize: true
+variables:
+  - to_anom
+  - u10
+  - v10
+  - msl
+  - ssr
+ocean_variables:
+  - to_anom
+in_channels: 5
+seed: 42
+fold: 0
+output_dir: /p/project1/hai_1127/radin1/spatial_forecast/experiments/runs/SSTAtm_seed42_fold0  # pragma: allowlist secret

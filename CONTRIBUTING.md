@@ -28,6 +28,8 @@ pre-commit install --hook-type pre-commit --hook-type pre-push
 
 ## pip command cheatsheet
 
+### Scalar pipeline (NS point target)
+
 | Task | Command |
 |------|---------|
 | Activate environment | `source venv/bin/activate` |
@@ -38,6 +40,21 @@ pre-commit install --hook-type pre-commit --hook-type pre-push
 | Train (kfold) | `python train.py --config configs/kfold/TbotAtm.yaml` |
 | Train (partition) | `python scripts/train_partition.py --config configs/partition/remote.yaml --mode remote_only` |
 | Eval onset skill | `python scripts/eval_onset_skill.py --mode remote_only` |
+
+### Spatial pipeline (2D to_anom field target)
+
+Two parallel pipelines share the same repo and `results/all_results.csv`.
+Experiment outputs (checkpoints, `test_preds.npy`) live outside the repo at
+`/p/project1/hai_1127/radin1/spatial_forecast/experiments/` (heavy, gitignored).
+
+| Task | Command |
+|------|---------|
+| Train spatial (standard) | `python scripts_spatial/train_spatial.py --config configs/spatial/SSTAtm_fold0.yaml` |
+| Train spatial (physics loss) | `python scripts_spatial/train_spatial_phys.py --config configs/spatial/SSTAtm_phys_fold0.yaml` |
+| Eval persistence baseline | `python scripts_spatial/eval/persistence_baseline_spatial.py` |
+| Eval MHW onset maps | `python scripts_spatial/eval/mhw_onset_skill.py` *(see known_issues.md NF-S-5 — MHW criterion invalid)* |
+
+Both pipelines share: `docs/known_issues.md`, `results/all_results.csv`.
 
 
 ## Data

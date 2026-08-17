@@ -2,6 +2,7 @@
 Training script for MHW precursor detection (CNN-LSTM + Temporal Attention).
 """
 
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -107,10 +108,18 @@ def main():
         LossCurvePlotCallback(output_dir),
     ]
 
+    wandb_entity = os.environ.get("WANDB_ENTITY")
+    wandb_project = os.environ.get("WANDB_PROJECT")
+    if not wandb_entity or not wandb_project:
+        raise RuntimeError(
+            "WANDB_ENTITY and WANDB_PROJECT must be set. "
+            "Add them to .env or export before running."
+        )
     logger = WandbLogger(
-        entity="hereon-ksn-expercursors",
-        project="mhw-precursors",
+        entity=wandb_entity,
+        project=wandb_project,
         save_dir=str(output_dir),
+        mode=os.environ.get("WANDB_MODE", "online"),
         config=config,
     )
 

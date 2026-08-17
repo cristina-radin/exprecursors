@@ -115,10 +115,13 @@ class CNNLSTMModel(nn.Module):
         lstm_layers: int = 2,
         temporal_features: int = 3,
         dropout: float = 0.3,
+        arch: str = "lstm_only",
+        gaussian_nll: bool = False,
     ):
         super().__init__()
 
         self.temporal_features = temporal_features
+        self.arch = arch
         self.cnn_encoder = CNNEncoder(in_channels, out_features=cnn_features)
 
         self.lstm = nn.LSTM(
@@ -129,9 +132,10 @@ class CNNLSTMModel(nn.Module):
             dropout=dropout if lstm_layers > 1 else 0.0,
         )
 
-        self.attention = TemporalAttention(lstm_hidden)
+        if arch != "lstm_only":
+            self.attention = TemporalAttention(lstm_hidden)
 
-        # FC head: attended spatial features (+ temporal features if any) → scalar
+        # FC head: LSTM/attention features (+ temporal features if any) → scalar
         self.fc = nn.Sequential(
             nn.Linear(lstm_hidden + temporal_features, 64),
             nn.ReLU(),
@@ -161,8 +165,10 @@ class CNNLSTMModel(nn.Module):
         # LSTM over the sequence
         lstm_out, _ = self.lstm(features)  # (batch, window, lstm_hidden)
 
-        # Temporal attention
-        context = self.attention(lstm_out)  # (batch, lstm_hidden)
+        if self.arch == "lstm_only":
+            context = lstm_out[:, -1, :]  # last timestep, no attention
+        else:
+            context = self.attention(lstm_out)  # (batch, lstm_hidden)
 
         if self.temporal_features > 0:
             temporal_summary = x_temporal.mean(dim=1)

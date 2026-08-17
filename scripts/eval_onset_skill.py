@@ -231,7 +231,7 @@ def main():
             folder = "remote" if args.mode == "remote_only" else "local"
             cfg = (
                 Path(__file__).parents[1]
-                / f"partition/configs/{folder}/fold{fold}.yaml"
+                / f"configs/partition/{folder}/fold{fold}.yaml"
             )
             name = "remote" if args.mode == "remote_only" else "local"
             ckpt_dir = (
