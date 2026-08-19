@@ -62,6 +62,8 @@ def main():
         dropout=config.get("dropout", 0.3),
         arch=config.get("arch", "lstm_attention"),
         gaussian_nll=config.get("gaussian_nll", False),
+        pooling=config.get("pooling", "max"),
+        quantile_head=config.get("quantile_head", False),
     )
     lm = CNNLightningModule.load_from_checkpoint(
         args.checkpoint,

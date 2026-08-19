@@ -136,6 +136,8 @@ def run_fold(fold, mode, lm_class, config_path, ckpt_path):
         dropout=0.0,
         arch=config.get("arch", "lstm_only"),
         gaussian_nll=config.get("gaussian_nll", False),
+        pooling=config.get("pooling", "max"),
+        quantile_head=config.get("quantile_head", False),
     )
     lm = lm_class.load_from_checkpoint(ckpt_path, model=cnn_lstm, map_location="cpu")
     lm.eval()

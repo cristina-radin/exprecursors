@@ -55,8 +55,12 @@ def load_model(config, ckpt_path, device):
         cnn_features=cfg.get("cnn_features", 128),
         lstm_hidden=cfg.get("lstm_hidden", 256),
         lstm_layers=cfg.get("lstm_layers", 2),
-        temporal_features=3,
+        temporal_features=cfg.get("temporal_features", 3),
         dropout=cfg.get("dropout", 0.3),
+        arch=cfg.get("arch", "lstm_only"),
+        gaussian_nll=cfg.get("gaussian_nll", False),
+        pooling=cfg.get("pooling", "max"),
+        quantile_head=cfg.get("quantile_head", False),
     )
     lm = CNNLightningModule.load_from_checkpoint(
         str(ckpt_path), model=cnn_lstm, map_location=device

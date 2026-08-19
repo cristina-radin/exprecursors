@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.datamodule import LazyDataModule
 from src.data.masking import mask_local, mask_remote
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
+from src.utils.checkpoints import save_model_config
 
 # ── Remote-only: zero everything INSIDE NS box ───────────────────────────────
 
@@ -136,7 +137,7 @@ def main():
     datamodule = LazyDataModule(config_path=args.config)
     datamodule.setup()
 
-    model = CNNLSTMModel(
+    model_kwargs = dict(
         in_channels=config["in_channels"],
         cnn_features=config.get("cnn_features", 256),
         lstm_hidden=config.get("lstm_hidden", 512),
@@ -146,7 +147,13 @@ def main():
         arch=config.get("arch", "lstm_only"),
         gaussian_nll=config.get("gaussian_nll", False),
         pooling=config.get("pooling", "max"),
+        quantile_head=config.get("quantile_head", False),
     )
+    model = CNNLSTMModel(**model_kwargs)
+    # Ground truth for eval/XAI scripts (load_model_config) — the exact
+    # resolved kwargs used to build `model`, so they can't independently
+    # re-derive (and drift from) these defaults. See src/utils/checkpoints.py.
+    save_model_config(output_dir, **model_kwargs)
 
     LightningClass = MODE_MAP[args.mode]
     lightning_module = LightningClass(
@@ -156,6 +163,9 @@ def main():
         target_std=datamodule.target_std,
         loss_fn=config.get("loss_fn", "MSELoss"),
         gaussian_nll=config.get("gaussian_nll", False),
+        quantile_head=config.get("quantile_head", False),
+        quantile_tau=config.get("quantile_tau", 0.0),
+        quantile_weight=config.get("quantile_weight", 0.7),
     )
 
     callbacks = [

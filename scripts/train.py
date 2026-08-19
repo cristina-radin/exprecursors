@@ -81,6 +81,10 @@ def main():
         lstm_layers=config.get("lstm_layers", 2),
         temporal_features=config.get("temporal_features", 3),
         dropout=config.get("dropout", 0.3),
+        arch=config.get("arch", "lstm_only"),
+        gaussian_nll=config.get("gaussian_nll", False),
+        pooling=config.get("pooling", "max"),
+        quantile_head=config.get("quantile_head", False),
     )
 
     lightning_module = CNNLightningModule(
@@ -89,6 +93,10 @@ def main():
         target_mean=datamodule.target_mean,
         target_std=datamodule.target_std,
         loss_fn=config.get("loss_fn", "MSELoss"),
+        gaussian_nll=config.get("gaussian_nll", False),
+        quantile_head=config.get("quantile_head", False),
+        quantile_tau=config.get("quantile_tau", 0.0),
+        quantile_weight=config.get("quantile_weight", 0.7),
     )
 
     callbacks = [

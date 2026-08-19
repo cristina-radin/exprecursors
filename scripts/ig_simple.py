@@ -97,6 +97,8 @@ def main():
         arch=arch,
         gaussian_nll=gnll,
         temporal_features=tf,
+        pooling=cfg.get("pooling", "max"),
+        quantile_head=cfg.get("quantile_head", False),
     )
     ckpt = torch.load(args.checkpoint, map_location="cpu")
     state = ckpt.get("state_dict", ckpt)

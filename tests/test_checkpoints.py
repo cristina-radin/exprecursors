@@ -70,6 +70,8 @@ def _load_fold_pred(
         dropout=0.0,
         arch=config.get("arch", "lstm_only"),
         gaussian_nll=config.get("gaussian_nll", False),
+        pooling=config.get("pooling", "max"),
+        quantile_head=config.get("quantile_head", False),
     )
     lm = CNNLightningModule.load_from_checkpoint(
         ckpt, model=model, map_location="cpu", strict=True
@@ -100,8 +102,11 @@ def test_kfold_predictions_not_identical():
     t_feats = config.get("temporal_features", 0)
 
     torch.manual_seed(0)
-    dummy_xs = torch.randn(1, n_vars, window, 20, 20)
-    dummy_xt = torch.zeros(1, t_feats) if t_feats > 0 else torch.zeros(1, 0)
+    # Model expects (batch, window, n_vars, lat, lon) and (batch, window, t_feats)
+    dummy_xs = torch.randn(1, window, n_vars, 20, 20)
+    dummy_xt = (
+        torch.zeros(1, window, t_feats) if t_feats > 0 else torch.zeros(1, window, 0)
+    )
 
     fold_preds = {}
     for fold in range(5):

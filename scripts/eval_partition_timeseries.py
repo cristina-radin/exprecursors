@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.datamodule import LazyDataModule
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
-from src.utils.checkpoints import best_ckpt
+from src.utils.checkpoints import best_ckpt, load_model_config
 
 REPO_ROOT = Path(__file__).parent.parent
 EXPERIMENTS_DIR = REPO_ROOT / "experiments" / "partition"
@@ -59,22 +59,39 @@ def run_fold(fold: int, partition: str, model_tag: str, device: str, batch_size:
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
 
-    inner = CNNLSTMModel(
-        in_channels=cfg["in_channels"],
-        cnn_features=cfg.get("cnn_features", 128),
-        lstm_hidden=cfg.get("lstm_hidden", 256),
-        lstm_layers=cfg.get("lstm_layers", 2),
-        temporal_features=cfg.get("temporal_features", 0),
-        dropout=cfg.get("dropout", 0.2),
-        arch=cfg.get("arch", "lstm_only"),
-        gaussian_nll=cfg.get("gaussian_nll", False),
-        pooling=cfg.get("pooling", "max"),
-    )
     run_dir = EXPERIMENTS_DIR / _run_name(partition, model_tag, fold)
+    # Ground truth for the architecture: run_dir/model_config.json if the
+    # run wrote one (train_partition.py does, as of Aug 19 2026), else
+    # derived from cfg using the same defaults train_partition.py uses —
+    # single source (src/utils/checkpoints.py) instead of re-guessing here.
+    model_kwargs = load_model_config(run_dir, fallback_cfg=cfg)
+    quantile_head = model_kwargs["quantile_head"]
+    inner = CNNLSTMModel(**model_kwargs)
     ckpt = best_ckpt(run_dir / "checkpoints")
-    lm = CNNLightningModule.load_from_checkpoint(
-        str(ckpt), model=inner, strict=False, map_location=device
-    )
+    # strict=True: the config drives both training and eval construction
+    # identically, so a real architecture mismatch (e.g. quantile_head not
+    # wired into `cfg` here) must fail loudly instead of silently dropping
+    # checkpoint weights (strict=False swallowed this for quantile_head
+    # before — the head's weights were trained but never loaded/used, with
+    # no error and no warning surfaced to the user).
+    try:
+        lm = CNNLightningModule.load_from_checkpoint(
+            str(ckpt), model=inner, strict=True, map_location=device
+        )
+    except RuntimeError as e:
+        # Only fall back for an actual state_dict key mismatch (PyTorch's
+        # load_state_dict error text) — anything else (corrupted checkpoint,
+        # CUDA error, etc.) is a different failure mode that strict=False
+        # would not fix, and must not be swallowed here.
+        if "Missing key(s)" not in str(e) and "Unexpected key(s)" not in str(e):
+            raise
+        print(
+            f"fold{fold}: STRICT LOAD FAILED (key mismatch) — falling back to "
+            f"strict=False. Some checkpoint weights will NOT be loaded:\n{e}"
+        )
+        lm = CNNLightningModule.load_from_checkpoint(
+            str(ckpt), model=inner, strict=False, map_location=device
+        )
     lm.eval().to(device)
     print(
         f"fold{fold}: loaded {ckpt.name}  (config: {cfg_path.relative_to(REPO_ROOT)})"
@@ -89,10 +106,15 @@ def run_fold(fold: int, partition: str, model_tag: str, device: str, batch_size:
         dm.test_dataset, batch_size=batch_size, shuffle=False, num_workers=0
     )
 
-    preds, log_vars, trues = [], [], []
+    preds, log_vars, trues, quantile_preds = [], [], [], []
     with torch.no_grad():
         for xs, xt, y in test_dl:
-            p = lm.model(xs.float().to(device), xt.float().to(device))
+            xs, xt = xs.float().to(device), xt.float().to(device)
+            if quantile_head:
+                p, q = lm.model.forward_with_quantile(xs, xt)
+                quantile_preds.append(q.squeeze(-1).cpu())
+            else:
+                p = lm.model(xs, xt)
             if p.ndim == 2 and p.shape[-1] == 2:
                 preds.append(p[:, 0].cpu())
                 log_vars.append(p[:, 1].cpu())
@@ -101,10 +123,16 @@ def run_fold(fold: int, partition: str, model_tag: str, device: str, batch_size:
             trues.append(y.squeeze(-1).cpu())
     preds = torch.cat(preds).numpy()
     trues = torch.cat(trues).numpy()
+    quantile_preds_norm = torch.cat(quantile_preds).numpy() if quantile_head else None
 
     # Denormalise to degC
     preds_c = preds * lm.target_std + lm.target_mean
     trues_c = trues * lm.target_std + lm.target_mean
+    quantile_pred_c = (
+        quantile_preds_norm * lm.target_std + lm.target_mean
+        if quantile_preds_norm is not None
+        else None
+    )
 
     has_std = len(log_vars) > 0
     if has_std:
@@ -122,6 +150,8 @@ def run_fold(fold: int, partition: str, model_tag: str, device: str, batch_size:
     dates, trues_c, preds_c = dates[order], trues_c[order], preds_c[order]
     if std_c is not None:
         std_c = std_c[order]
+    if quantile_pred_c is not None:
+        quantile_pred_c = quantile_pred_c[order]
 
     r = pearson_r(preds_c, trues_c)
     mae = float(np.mean(np.abs(preds_c - trues_c)))
@@ -142,6 +172,14 @@ def run_fold(fold: int, partition: str, model_tag: str, device: str, batch_size:
     )
     if std_c is not None:
         save_kwargs["std_degC"] = std_c
+    if quantile_pred_c is not None:
+        # Model's own predictive quantile (per-timestep), NOT Hobday's
+        # p90_thresh (fixed climatological threshold, src/utils/hobday.py).
+        # Name carries the tau it was trained at so it's unambiguous
+        # downstream regardless of what value quantile_tau takes.
+        save_kwargs[f"quantile_pred_tau{cfg['quantile_tau']:.2f}_degC"] = (
+            quantile_pred_c
+        )
     np.savez(out_path, **save_kwargs)
     print(f"fold{fold}: saved {out_path}")
 

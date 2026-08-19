@@ -69,7 +69,7 @@ def evaluate(model, loader, shuffle_window=False, n_shuffle=1, rng=None):
                     xs_perm = x_spatial[:, perm, :, :, :]
                     xt_perm = x_temporal[:, perm, :]
                     out = model(xs_perm.float(), xt_perm.float())
-                    mu = out[:, 0] if model.gaussian_nll else out[:, 0]
+                    mu = out[:, 0]  # col 0 is mean whether gaussian_nll or not
                     preds_batch.append(mu.cpu().numpy())
                 preds = np.mean(preds_batch, axis=0)
             else:

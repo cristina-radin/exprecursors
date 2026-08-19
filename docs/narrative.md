@@ -137,8 +137,34 @@ fragility) is worth a sentence in the paper if the fold0 number is shown.
 ## Architecture choices
 
 <!-- Why LSTM-only (vs attention, TCN, ConvLSTM).
-     Why MSE (vs GNLL — include GNLL as supplementary or drop).
      K-fold CV: why 5 folds, how splits were made. -->
+
+_Aug 19 2026 — GNLL vs MSE: global skill hides near-zero tail skill._
+
+Overall r≈0.87 for both gnll and mse_v2 (TbotAtm full, 5-fold test,
+`test_predictions.npz`) is driven by the seasonal cycle, which dominates
+total variance and is easy for any model to track. Restricted to the days
+that actually matter for MHW (truth > p90, n=1454 days), skill collapses:
+r=0.218 (gnll), r=0.224 (mse_v2). Amplitude is compressed in both
+(std(pred)/std(truth)≈0.83), and on those extreme days mean(pred) is
+0.78–0.86°C vs mean(truth)=1.25°C — classic MSE/NLL shrinkage-to-the-mean,
+worse for gnll (only 15.2% of true-extreme days end up with pred>p90) than
+mse_v2 (34.4%). Do not cite the global r as evidence of MHW-detection
+skill — report the two numbers separately.
+
+**MHW event detection — Hobday on the predicted mean underestimates
+severely (12/52 events, gnll), and does not use GNLL's own std output.**
+Fix: `scripts/mhw_ensemble_hobday.py` samples per-day trajectories from
+the predicted N(mean, std), applies the literal Hobday algorithm
+(`src/utils/hobday.py:apply_hobday`, unmodified) to each sampled
+trajectory, then aggregates by majority vote (fixed at 0.5 — not tuned on
+test, to avoid threshold-shopping). Result: 23/52 events, 282/1061 days,
+event-overlap recall 19.2%→30.8% vs. the naive mean-threshold approach.
+This is the legitimate way to use GNLL's predictive distribution for
+event detection; thresholding `P(exceed) = 1-Φ((p90-mean)/std)` per day
+directly (no Hobday duration/gap logic) was tried first and rejected —
+it silently drops the Hobday definition (classifies a probability, not a
+temperature series) and the cutoff (0.3) was picked by eye on test data.
 
 ---
 
@@ -236,3 +262,28 @@ _Status: pending IG maps from job 14200537 (ETA ~3h)._
 ## Open scientific questions
 
 <!-- Things not settled yet. Remove entries when resolved. -->
+
+**⚠️ Aug 19 2026 — quantile_tau combined loss: design risk, not yet run.**
+`src/models/cnn_lstm.py` now supports `quantile_tau`/`quantile_weight`:
+`loss = quantile_weight·pinball(mean, y, tau) + (1-quantile_weight)·NLL(mean, y, var)`,
+both terms applied to the *same* `mean` output
+(`configs/partition/full_gnll_quantile/fold{0-4}.yaml`: tau=0.9, weight=0.7).
+`train_partition.py` wiring verified (smoke test only, no real training run
+yet — no `experiments/partition/*quantile*` output exists).
+
+Risk: `mean` cannot simultaneously be E[Y|X] (what NLL assumes) and
+Q_0.9(Y|X) (what pinball τ=0.9 targets) — pinball(τ=0.9) pushes the point
+estimate up on *all* days, not just extreme ones, since a 0.9-quantile
+regressor is biased high everywhere by construction. At weight=0.7 this
+likely: (a) biases `mean` high on the ~90% of non-extreme days, hurting
+reported r/MAE against the existing gnll/mse_v2 numbers above; (b) makes
+`var` mis-fit (NLL's var is only meaningful around the true conditional
+mean, not around a quantile-biased one), which would break the
+ensemble-Hobday approach above — it samples from N(mean, std) assuming
+it approximates the real predictive distribution.
+Before running the 5-fold job: check `q_loss`/`nll_loss` logged
+separately (already wired, `cnn_lstm.py` `.log()` calls) on even a short
+run to see whether one term dominates, and sanity-check `mean` on
+non-extreme days isn't shifted up vs. the existing gnll checkpoint. A
+safer alternative not yet tried: pinball as an auxiliary third output
+head, not mixed into the same `mean` channel used by NLL.
