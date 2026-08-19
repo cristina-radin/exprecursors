@@ -32,6 +32,7 @@ from src.data.datamodule import LazyDataModule
 from src.data.masking import mask_local, mask_remote
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 from src.utils.checkpoints import save_model_config
+from src.utils.hobday import load_ns_p90
 
 # ── Remote-only: zero everything INSIDE NS box ───────────────────────────────
 
@@ -43,16 +44,19 @@ class RemoteOnlyLightningModule(CNNLightningModule):
         return mask_remote(xs)
 
     def training_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().training_step((self._mask(xs), xt, y), batch_idx)
+        # *rest so this works with both the standard 3-tuple batch and the
+        # 4-tuple (..., target_doy) that focal_weight=True adds — the mask
+        # only ever touches x_spatial (index 0).
+        xs, xt, y, *rest = batch
+        return super().training_step((self._mask(xs), xt, y, *rest), batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().validation_step((self._mask(xs), xt, y), batch_idx)
+        xs, xt, y, *rest = batch
+        return super().validation_step((self._mask(xs), xt, y, *rest), batch_idx)
 
     def test_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().test_step((self._mask(xs), xt, y), batch_idx)
+        xs, xt, y, *rest = batch
+        return super().test_step((self._mask(xs), xt, y, *rest), batch_idx)
 
 
 # ── Local-only: zero everything OUTSIDE NS box ───────────────────────────────
@@ -65,16 +69,16 @@ class LocalOnlyLightningModule(CNNLightningModule):
         return mask_local(xs)
 
     def training_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().training_step((self._mask(xs), xt, y), batch_idx)
+        xs, xt, y, *rest = batch
+        return super().training_step((self._mask(xs), xt, y, *rest), batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().validation_step((self._mask(xs), xt, y), batch_idx)
+        xs, xt, y, *rest = batch
+        return super().validation_step((self._mask(xs), xt, y, *rest), batch_idx)
 
     def test_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().test_step((self._mask(xs), xt, y), batch_idx)
+        xs, xt, y, *rest = batch
+        return super().test_step((self._mask(xs), xt, y, *rest), batch_idx)
 
 
 # ── Loss curve callback ───────────────────────────────────────────────────────
@@ -147,6 +151,7 @@ def main():
         arch=config.get("arch", "lstm_only"),
         gaussian_nll=config.get("gaussian_nll", False),
         pooling=config.get("pooling", "max"),
+        padding_mode=config.get("padding_mode", "zeros"),
         quantile_head=config.get("quantile_head", False),
     )
     model = CNNLSTMModel(**model_kwargs)
@@ -154,6 +159,17 @@ def main():
     # resolved kwargs used to build `model`, so they can't independently
     # re-derive (and drift from) these defaults. See src/utils/checkpoints.py.
     save_model_config(output_dir, **model_kwargs)
+
+    focal_weight = config.get("focal_weight", False)
+    p90_by_doy = None
+    if focal_weight:
+        # NS-box-mean Hobday p90(DOY), same physical units as `target`
+        # (un-normalised North Sea SST anomaly) — see src/utils/hobday.py.
+        # Requires the config to also set return_target_doy: true so
+        # LazyDataset yields the 4-tuple _step()'s focal branch expects;
+        # if it doesn't, the mismatch fails loudly on the first training
+        # step (unpacking error), not silently.
+        p90_by_doy = torch.tensor(load_ns_p90(), dtype=torch.float32)
 
     LightningClass = MODE_MAP[args.mode]
     lightning_module = LightningClass(
@@ -166,6 +182,9 @@ def main():
         quantile_head=config.get("quantile_head", False),
         quantile_tau=config.get("quantile_tau", 0.0),
         quantile_weight=config.get("quantile_weight", 0.7),
+        focal_weight=focal_weight,
+        focal_alpha=config.get("focal_alpha", 1.0),
+        p90_by_doy=p90_by_doy,
     )
 
     callbacks = [
@@ -210,7 +229,7 @@ def main():
         logger=logger,
         accelerator="auto",
         devices="auto",
-        num_sanity_val_steps=0,
+        num_sanity_val_steps=2,
         fast_dev_run=args.fast_dev_run if args.fast_dev_run > 0 else False,
     )
 

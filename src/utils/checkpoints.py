@@ -18,6 +18,7 @@ CNNLSTM_DEFAULTS = {
     "gaussian_nll": False,
     "pooling": "max",
     "quantile_head": False,
+    "padding_mode": "zeros",
 }
 CNNLSTM_MODEL_KEYS = ("in_channels",) + tuple(CNNLSTM_DEFAULTS)
 
@@ -82,6 +83,11 @@ def best_ckpt(ckpt_dir: Path) -> Path:
 
     def _val_loss(c):
         m = re.search(r"val_loss=([-\d.]+?)\.ckpt", c.name)
-        return float(m.group(1).rstrip(".")) if m else float("inf")
+        if not m:
+            raise ValueError(
+                f"Could not parse val_loss from checkpoint filename {c.name!r} "
+                f"— refusing to silently rank it as worst (known_issues.md #11)."
+            )
+        return float(m.group(1).rstrip("."))
 
     return min(ckpts, key=_val_loss)

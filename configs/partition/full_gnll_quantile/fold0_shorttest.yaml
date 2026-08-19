@@ -18,12 +18,12 @@ quantile_weight: 0.3
 temporal_features: 0
 split_mode: kfold
 n_folds: 5
-fold: 4
+fold: 0
 train_ratio: 0.75
 val_ratio: 0.15
 test_ratio: 0.1
 seed: 42
-output_dir: /raven/u/cradin/exprecursors/experiments/partition/TbotAtm_full_gnll_quantile_seed42_fold4
+output_dir: /raven/u/cradin/exprecursors/experiments/partition/TbotAtm_full_gnll_quantile_seed42_fold0_shorttest
 normalize: true
 clim_ref_start: 1985
 clim_ref_end: 2014
@@ -36,6 +36,6 @@ lstm_layers: 2
 dropout: 0.2
 learning_rate: 0.0001
 batch_size: 16
-max_epochs: 1000
+max_epochs: 3
 window_size: 60
 lead_time: 7

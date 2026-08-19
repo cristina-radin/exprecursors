@@ -206,6 +206,7 @@ def load_model(ckpt_path, cfg, device):
         arch=cfg.get("arch", "lstm_only"),
         gaussian_nll=cfg.get("gaussian_nll", False),
         pooling=cfg.get("pooling", "max"),
+        padding_mode=cfg.get("padding_mode", "zeros"),
         quantile_head=cfg.get("quantile_head", False),
     )
     lm = CNNLightningModule.load_from_checkpoint(

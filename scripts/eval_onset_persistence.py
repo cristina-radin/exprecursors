@@ -12,15 +12,20 @@ Persistence definition:
   First 7 samples of each fold: NaN if any onset day falls there (reported).
 
 Usage (CPU, login node):
-  python scripts/eval_onset_persistence.py
+  python scripts/eval_onset_persistence.py --output experiments/figures/onset_skill_vs_persistence.png
 """
 
+import argparse
 import sys
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 from scipy.ndimage import uniform_filter1d
 from scipy.stats import pearsonr
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.utils.paths import CLIM_FILE, EXPERIMENTS_DIR
@@ -102,10 +107,75 @@ def r_ci(r, n, alpha=0.05):
     return float(np.tanh(z_lo)), float(np.tanh(z_hi))
 
 
+# ── Plot ─────────────────────────────────────────────────────────────────────
+
+
+def plot_onset_skill(results: dict, output: Path):
+    """Grouped bar chart: r_model vs r_persist per partition mode, with 95% CI."""
+    modes = [m for m in MODES if m in results and not np.isnan(results[m]["r_model"])]
+    r_model = np.array([results[m]["r_model"] for m in modes])
+    r_persist = np.array([results[m]["r_persist"] for m in modes])
+    ci_model = np.array([results[m]["r_model_ci"] for m in modes])
+    ci_persist = np.array([results[m]["r_persist_ci"] for m in modes])
+
+    err_model = np.abs(ci_model.T - r_model)
+    err_persist = np.abs(ci_persist.T - r_persist)
+
+    x = np.arange(len(modes))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.bar(
+        x - width / 2,
+        r_persist,
+        width,
+        yerr=err_persist,
+        capsize=5,
+        color="#e08214",
+        alpha=0.85,
+        label="Persistence (lag-7)",
+        zorder=3,
+    )
+    ax.bar(
+        x + width / 2,
+        r_model,
+        width,
+        yerr=err_model,
+        capsize=5,
+        color="#2166ac",
+        alpha=0.85,
+        label="Model",
+        zorder=3,
+    )
+    ax.axhline(0, color="k", lw=1.0)
+    ax.set_xticks(x)
+    ax.set_xticklabels(modes)
+    ax.set_ylabel("Pearson r", fontsize=12)
+    ax.set_title(
+        f"Onset skill vs persistence (n={results[modes[0]]['n']}, pooled 5 folds)",
+        fontsize=12,
+    )
+    ax.legend(fontsize=10)
+    ax.grid(alpha=0.35, axis="y")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    print(f"\nSaved: {output}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--output",
+        default="experiments/figures/onset_skill_vs_persistence.png",
+        help="Output path for the r_model vs r_persist bar chart",
+    )
+    args = parser.parse_args()
+
     p90_ns = load_ns_p90()
     print(f"p90_ns loaded: min={p90_ns.min():.3f}  max={p90_ns.max():.3f}\n")
 
@@ -211,6 +281,8 @@ def main():
             s = json.load(f)
         rs_all = [s[str(f)]["all"]["r_model"] for f in range(N_FOLDS)]
         print(f"  {mode:<14}: r_all = {np.mean(rs_all):.4f} ± {np.std(rs_all):.4f}")
+
+    plot_onset_skill(results, Path(args.output))
 
 
 if __name__ == "__main__":

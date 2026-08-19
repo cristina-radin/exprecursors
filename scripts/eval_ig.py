@@ -128,6 +128,7 @@ def main():
         arch=config.get("arch", "lstm_only"),
         gaussian_nll=config.get("gaussian_nll", False),
         pooling=config.get("pooling", "max"),
+        padding_mode=config.get("padding_mode", "zeros"),
         quantile_head=config.get("quantile_head", False),
     )
     lm = CNNLightningModule.load_from_checkpoint(

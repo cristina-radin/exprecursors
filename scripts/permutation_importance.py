@@ -59,6 +59,7 @@ def load_model(fold, partition, device, model_tag=""):
         arch=cfg.get("arch", "lstm_only"),
         gaussian_nll=cfg.get("gaussian_nll", False),
         pooling=cfg.get("pooling", "max"),
+        padding_mode=cfg.get("padding_mode", "zeros"),
         quantile_head=cfg.get("quantile_head", False),
     )
     run_dir = EXPERIMENTS_DIR / _run_name(partition, model_tag, fold)

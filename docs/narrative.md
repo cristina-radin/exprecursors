@@ -263,27 +263,109 @@ _Status: pending IG maps from job 14200537 (ETA ~3h)._
 
 <!-- Things not settled yet. Remove entries when resolved. -->
 
-**⚠️ Aug 19 2026 — quantile_tau combined loss: design risk, not yet run.**
-`src/models/cnn_lstm.py` now supports `quantile_tau`/`quantile_weight`:
-`loss = quantile_weight·pinball(mean, y, tau) + (1-quantile_weight)·NLL(mean, y, var)`,
-both terms applied to the *same* `mean` output
-(`configs/partition/full_gnll_quantile/fold{0-4}.yaml`: tau=0.9, weight=0.7).
-`train_partition.py` wiring verified (smoke test only, no real training run
-yet — no `experiments/partition/*quantile*` output exists).
+**⚠️ SUPERSEDED — the entry below described a mixed-mean design that was
+never actually shipped; see the corrected entry further down.**
 
-Risk: `mean` cannot simultaneously be E[Y|X] (what NLL assumes) and
-Q_0.9(Y|X) (what pinball τ=0.9 targets) — pinball(τ=0.9) pushes the point
-estimate up on *all* days, not just extreme ones, since a 0.9-quantile
-regressor is biased high everywhere by construction. At weight=0.7 this
-likely: (a) biases `mean` high on the ~90% of non-extreme days, hurting
-reported r/MAE against the existing gnll/mse_v2 numbers above; (b) makes
-`var` mis-fit (NLL's var is only meaningful around the true conditional
-mean, not around a quantile-biased one), which would break the
-ensemble-Hobday approach above — it samples from N(mean, std) assuming
-it approximates the real predictive distribution.
-Before running the 5-fold job: check `q_loss`/`nll_loss` logged
-separately (already wired, `cnn_lstm.py` `.log()` calls) on even a short
-run to see whether one term dominates, and sanity-check `mean` on
-non-extreme days isn't shifted up vs. the existing gnll checkpoint. A
-safer alternative not yet tried: pinball as an auxiliary third output
-head, not mixed into the same `mean` channel used by NLL.
+~~Aug 19 2026 — quantile_tau combined loss: design risk, not yet run.~~
+~~`src/models/cnn_lstm.py` now supports `quantile_tau`/`quantile_weight`:~~
+~~`loss = quantile_weight·pinball(mean, y, tau) + (1-quantile_weight)·NLL(mean, y, var)`,~~
+~~both terms applied to the *same* `mean` output~~
+~~(`configs/partition/full_gnll_quantile/fold{0-4}.yaml`: tau=0.9, weight=0.7).~~
+~~`train_partition.py` wiring verified (smoke test only, no real training run~~
+~~yet — no `experiments/partition/*quantile*` output exists).~~
+
+~~Risk: `mean` cannot simultaneously be E[Y|X] (what NLL assumes) and~~
+~~Q_0.9(Y|X) (what pinball τ=0.9 targets) — pinball(τ=0.9) pushes the point~~
+~~estimate up on *all* days, not just extreme ones, since a 0.9-quantile~~
+~~regressor is biased high everywhere by construction.~~ [...] ~~A~~
+~~safer alternative not yet tried: pinball as an auxiliary third output~~
+~~head, not mixed into the same `mean` channel used by NLL.~~
+
+**Corrected — Aug 19-20 2026 — the safer alternative WAS what shipped.**
+The same commit that added this narrative entry (`f35cb6e`, Aug 19 15:39)
+also implemented the "safer alternative" it proposed, but this doc wasn't
+updated to say so until now: `CNNLSTMModel` has an independent
+`quantile_head` (own `nn.Linear` params, no weight sharing with `self.fc`)
+attached alongside the GNLL head, sharing only the backbone via
+`_encode()`. `loss = NLL(mean, y, var) + quantile_weight · pinball(q_pred,
+y, tau)`, where `q_pred` comes from the separate head — `mean`/`var` never
+see a pinball gradient. Verified by direct `torch.autograd.grad` check
+(disjoint-gradient smoke test, Aug 19 2026): backpropagating NLL alone
+leaves `quantile_head`'s gradient `None`. `full_gnll_quantile/fold{0-4}.yaml`
+uses tau=0.9, weight=0.3 (not 0.7 as in the superseded entry above).
+
+**First real run — fold0, 3-epoch diagnostic (job 29403121, Raven, Aug 19-20
+2026), not the full run**: `test_nll_loss=-0.1356`, `test_pinball_loss=0.0846`
+→ combined loss ≈ `-0.1356 + 0.3×0.0846 ≈ -0.110` — pinball contributes ~19%
+of |nll| even after weighting, neither term dominates. Test MAE=0.30°C,
+Pearson r=0.724 already after 3 epochs (promising, not yet a converged
+result). `val_loss` went 0.037 → -0.197 → -0.173 across the 3 epochs —
+expected behavior, not a bug: `GaussianNLLLoss(reduction="mean",
+full=False)` is `0.5·(log(var) + (y-mean)²/var)`, unbounded below 0 (unlike
+MSE) whenever predicted `var` is small relative to the residual scale,
+which is normal once the target is z-scored to std≈1. A negative loss is
+only meaningful once checked against calibration (`mean(var_pred)` vs.
+`mean((y_true-mean_pred)²)` on held-out data) — not yet done for this run
+specifically; on the to-do list before citing r/MAE as final numbers.
+Run: https://wandb.ai/hereon-ksn-expercursors/mhw-precursors/runs/z7jh2nqb.
+
+**Compute cost (Raven `gpu1`, measured directly, job 29403121)**: ~5.4
+min/epoch (589 batches/epoch @ ~1.83 it/s), `billing=124`/hour (`TRESBillingWeights:
+CPU=1.0, GPU=108.0`, 16 cpu + 1 A100). The 3-epoch diagnostic cost ~42
+billing-hours. A full 5-fold array (target for both `full_gnll_quantile`
+and `full_gnll_focal`) is estimated at ~1700-2250 billing-hours each
+(~30-40 epochs/fold to early-stop, unconfirmed until a real fold completes)
+— no confirmed hard SLURM-side quota found for account `mmm_gpu`
+(`sacctmgr show assoc` shows no `GrpTRESMins`/`MaxTRESMins`); any project-level
+cap would be on the MPCDF portal, not visible from the CLI. Decision: launch
+fold0 of each variant first to get a real per-fold cost before committing
+all 10 folds (5×2 variants).
+
+**Platform note**: this experiment (`full_gnll_quantile`,
+`full_gnll_focal`) runs on **MPCDF Raven**, not JUWELS — ported Aug 19 2026
+because this session had no JUWELS data/venv access. `configs/partition/
+full_gnll_quantile/fold{0-4}.yaml` `data_dir`/`output_dir` point at Raven
+paths (`/raven/u/cradin/data/merged_daily.nc`,
+`/raven/u/cradin/exprecursors/experiments/...`), NOT the JUWELS paths used
+by every other experiment in this doc — do not assume these two experiments'
+paths are portable to JUWELS without editing back. `scripts/slurm/
+submit_gnll_quantile_partition.sh`/`submit_gnll_focal_partition.sh` use
+Raven's `gpu1` partition, account `mmm_gpu`, module `python-waterboa/2024.06`
+— JUWELS-specific `--partition=booster`/`Stages/2025` module stack does
+not apply to these two runs.
+
+**Aug 20 2026 — focal-weighted NLL: third variant, alternative to the
+quantile head.** User's proposal: instead of an auxiliary quantile-regression
+head, reweight the per-sample `GaussianNLLLoss` toward exceedance days
+(`truth > Hobday p90(DOY)`) — `loss_i × (1 + focal_alpha)` if extreme, else
+`loss_i × 1`, weighted average. Statistical rationale (cleaner than the
+quantile head for a paper): `mean` stays exactly `E[Y|X]` and `var` stays
+exactly the conditional variance — nothing about what they're fit to
+predict changes, only which samples get more weight. Implemented
+opt-in (`focal_weight`/`focal_alpha`/`return_target_doy` in config) without
+changing `LazyDataset.__getitem__`'s default 3-tuple return (would have
+broken ~20 existing call sites) —
+see `src/models/cnn_lstm.py::CNNLightningModule._focal_weighted_loss` and
+`known_issues.md` #37-39 for gaps/gotchas found while wiring this up.
+`configs/partition/full_gnll_focal/fold{0-4,0_shorttest}.yaml`,
+`scripts/slurm/submit_gnll_focal_{shorttest,partition}.sh`.
+
+**Diagnostic result (job 29403991, fold0, 3 epochs, Aug 20 2026)**:
+`test_nll_loss_unweighted=-0.0519`, `test_nll_loss_weighted=-0.0549` — close,
+weighting isn't distorting the loss scale. `test_frac_extreme=0.0356`
+(3.56% of fold0's test-year samples flagged extreme) looked low against the
+~10% textbook Hobday rate, so checked directly against the full record
+before trusting it: overall 1985-2024 exceedance = 7.4%, reference period
+1985-2014 = 6.2%, recent decade 2015-2024 = 11.2% (consistent with the
+warming trend already documented elsewhere in this file) — mechanism
+confirmed correct, fold0's 3.56% is just normal sampling variability from
+an 8-year test subset, not a units/threshold bug. MAE=0.34°C, r=0.699 (vs.
+quantile-head's MAE=0.30°C, r=0.724 at the same 3 epochs — not conclusive,
+too early to compare variants on 3-epoch numbers).
+Run: https://wandb.ai/hereon-ksn-expercursors/mhw-precursors/runs/l903ypre.
+
+**Both 5-fold arrays launched Aug 20 2026** after their respective
+diagnostics passed: `full_gnll_quantile` job 29404086, `full_gnll_focal`
+job 29404257. Real per-fold cost (not yet known — see compute-cost note
+above) will determine whether the ~1700-2250 billing-hour/variant estimate
+holds.

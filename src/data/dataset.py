@@ -53,6 +53,12 @@ class LazyDataset(Dataset):
         self.clim_window = config.get("clim_window", 5)
         self.detrend_variables = set(config.get("detrend_variables", []))
         self.detrend_target = config.get("detrend_target", False)
+        # Opt-in: __getitem__ returns a 4-tuple (..., target_doy) instead of
+        # the standard 3-tuple when True. Off by default so the ~20 existing
+        # call sites that unpack `xs, xt, y = ...` (scripts/, tests/) are
+        # unaffected — only a loss variant that needs a DOY-dependent
+        # threshold (e.g. focal-weighted NLL) should set this.
+        self.return_target_doy = config.get("return_target_doy", False)
 
         self.ds = xr.open_mfdataset(file_name, parallel=True, engine="netcdf4")
 
@@ -300,12 +306,18 @@ class LazyDataset(Dataset):
     def __len__(self) -> int:
         return len(self.ds.time) - self.window_size - self.lead_time + 1
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int):
         """
-        Returns:
+        Returns (x_spatial, x_temporal, y), or (x_spatial, x_temporal, y,
+        target_doy) if self.return_target_doy is True:
             x_spatial:  (window_size, n_vars, lat, lon) — anomalised + normalised
             x_temporal: (window_size, 3)                — year_norm, month_sin, month_cos
             y:          (1,)                            — normalised North Sea SST anomaly
+            target_doy: ()                               — day-of-year (1-365) of the
+                TARGET day (idx + window_size - 1 + lead_time), for focal-weighted
+                loss variants that need to look up a DOY-dependent threshold
+                (e.g. Hobday p90). Leap day (366) folded into 365, same
+                convention as the climatology-subtraction branch above.
         """
         window_spatial = []
         window_temporal = []
@@ -361,4 +373,12 @@ class LazyDataset(Dataset):
         y_raw = self.target[target_idx]
         y = ((y_raw - self.target_mean) / self.target_std).unsqueeze(0)
 
-        return x_spatial, x_temporal, y
+        if not self.return_target_doy:
+            return x_spatial, x_temporal, y
+
+        target_doy = int(self.doys[target_idx])
+        if target_doy >= 365:
+            target_doy = 365
+        target_doy = torch.tensor(target_doy, dtype=torch.long)
+
+        return x_spatial, x_temporal, y, target_doy

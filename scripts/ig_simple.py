@@ -98,6 +98,7 @@ def main():
         gaussian_nll=gnll,
         temporal_features=tf,
         pooling=cfg.get("pooling", "max"),
+        padding_mode=cfg.get("padding_mode", "zeros"),
         quantile_head=cfg.get("quantile_head", False),
     )
     ckpt = torch.load(args.checkpoint, map_location="cpu")

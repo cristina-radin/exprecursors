@@ -482,6 +482,147 @@ evidence — do not assume.
     pipeline (`src/models/cnn_lstm.py`) — that is why it is absent from
     `experiments/architecture_variables/`, not an oversight to fix here.
 
+30. **`cnn_features` default drift across scripts that build `CNNLSTMModel`
+    directly (not via `load_model_config`) — found during
+    `full_gnll_quantile` launch review, Aug 19 2026, not fixed**: 13 scripts
+    hardcode `cfg.get("cnn_features", 128)` (`permutation_importance.py`,
+    `composite_ig_signed.py`, `ig_signed_partition.py`, `ensemble_skill.py`,
+    `composite_ig.py`, `run_xai_ensemble.py`, `gradcam_partition.py`,
+    `diag_attention.py`, `plot_variable_scatter.py`, `plot_split_scatter.py`,
+    `train.py`, `skill_scores.py`, `run_xai.py`) while 10 others hardcode
+    `cfg.get("cnn_features", 256)` (`eval_onset_skill.py`,
+    `local_only_skill.py`, `eval_ig.py`, `train_local_only.py`,
+    `ig_masked_model.py`, `ig_masked_casestudy_2023.py`, `train_partition.py`,
+    `analysis/thermal_inertia_test.py`, `ig_masked_batched.py`,
+    `tests/test_checkpoints.py`). 128 matches `CNNLSTMModel`'s own
+    constructor default ([cnn_lstm.py](../src/models/cnn_lstm.py), same as
+    `checkpoints.py::CNNLSTM_DEFAULTS`); 256 matches what several kfold/
+    partition configs (including `full_gnll_quantile/fold{0-4}.yaml`)
+    explicitly set. Same silent-mismatch class as issue #16: `cfg.get(key,
+    default)` only falls back to the hardcoded default when `key` is absent
+    from the config file being read — for any config that DOES set
+    `cnn_features` explicitly (all `full_gnll_quantile` folds do, =256) this
+    is a no-op and not a live bug. Risk is latent: a future config that omits
+    `cnn_features` will silently get 128 or 256 depending on which of these
+    24 scripts happens to load it, with `strict=False`-style checkpoint
+    loads (issue #16) masking the resulting shape mismatch instead of
+    raising. Not fixed here (would mean editing 13 files, out of scope for
+    launching the quantile-head training run) — the real fix is migrating
+    all 24 direct-`CNNLSTMModel(...)`-construction call sites to
+    `load_model_config()` (already the documented single source of truth,
+    `checkpoints.py` lines 33-38), not aligning the hardcoded defaults
+    against each other.
+
+31. **`loss_fn` was dead code once `gaussian_nll=True` — fixed Aug 19 2026**:
+    `CNNLightningModule.__init__` ([cnn_lstm.py:381-395](../src/models/cnn_lstm.py))
+    built `self.nll_loss` whenever `gaussian_nll=True` regardless of `loss_fn`'s
+    value, and separately built `self.loss_fn` (MAE/MSE) from an unguarded
+    `if/elif` that ran even when `gaussian_nll=True` — so a config setting
+    `loss_fn: GaussianNLLLoss` (as every `full_gnll*` config does) had that
+    value silently ignored; GNLL activation is driven entirely by the
+    `gaussian_nll` boolean. Not the same failure mode as the now-superseded
+    issue #25 (which was "no real GNLL exists at all") — GNLL was real, just
+    `loss_fn` was decorative. **Fix**: `gaussian_nll=True` now requires
+    `loss_fn == "GaussianNLLLoss"` exactly, raising `ValueError` otherwise —
+    makes a future config typo fail loud instead of silently doing nothing.
+    Found by the user during `full_gnll_quantile` Raven launch review.
+
+32. **`test_preds`/`test_targets` not reset between `trainer.test()` calls —
+    fixed Aug 19 2026**: `CNNLightningModule.__init__` initialised these as
+    empty lists but nothing reset them before a test epoch
+    ([cnn_lstm.py](../src/models/cnn_lstm.py)) — harmless today (each fold is
+    a separate SLURM process) but would silently accumulate predictions
+    across multiple `trainer.test()` calls in the same process (e.g. a
+    notebook or an ensemble script). **Fix**: added `on_test_epoch_start()`
+    resetting both lists. Found by the user during `full_gnll_quantile`
+    Raven launch review.
+
+33. **`num_sanity_val_steps=0` in `train_partition.py` — changed to 2, Aug 19
+    2026**: disabled Lightning's pre-training validation sanity check, so a
+    broken config (wrong path, missing variable, shape mismatch) wasn't
+    caught until after a full first epoch — on this codebase's ~5.4 min/epoch
+    (measured on Raven A100, job 29403121) that's a real but modest cost, not
+    the ~2,400 core-hour class of issue #8. Changed to `2` (negligible added
+    time, runs once before training starts, not every epoch). Found by the
+    user during `full_gnll_quantile` Raven launch review.
+
+34. **Reflect padding added to `CNNEncoder`'s 4 `Conv2d` layers, Aug 19-20
+    2026**: previously always `padding_mode="zeros"`. Zero padding adds a
+    hard discontinuity at the domain boundary on top of the land-mask NaN→0
+    edge already there, and the user reported this shows up as boundary-band
+    artifacts in IG spatial maps ("cuatro franjas que opacan todos los
+    posibles resultados") — distinct from the #26 ~8px pooling-grid artifact.
+    `padding_mode: "zeros"|"reflect"` added to `CNNEncoder`/`CNNLSTMModel`
+    ([cnn_lstm.py](../src/models/cnn_lstm.py)), default `"zeros"` (existing
+    checkpoints unaffected). Wired into `checkpoints.py::CNNLSTM_DEFAULTS`
+    (so `model_config.json`/`load_model_config()` persist and restore it
+    correctly) and into all 24 scripts that construct `CNNLSTMModel`
+    directly — same treatment as `pooling` (#27) to avoid re-creating the
+    #16-class silent-mismatch bug for a brand new parameter. Enabled
+    (`padding_mode: reflect`) in `full_gnll_quantile` and `full_gnll_focal`
+    fold configs. Verified via smoke test (real-sized synthetic tensors):
+    `model.cnn_encoder.cnn[0].padding_mode == "reflect"`, full forward+backward
+    finite and gradients flow.
+
+35. **`best_ckpt()` silent `float("inf")` fallback — fixed Aug 19 2026**:
+    `src/utils/checkpoints.py::best_ckpt()`'s `_val_loss()` helper returned
+    `float("inf")` when the `val_loss=X.ckpt` regex failed to match a
+    filename, silently ranking that checkpoint as worst instead of raising —
+    a direct instance of issue #11 (no silent fallbacks), pre-existing since
+    at least the #3 note about trailing dots. **Fix**: raises `ValueError`
+    on a non-matching filename instead. Found by the user during
+    `full_gnll_quantile` Raven launch review; not triggered by the current
+    launch (only used by downstream eval/XAI scripts, not training).
+
+36. **`cnn_features` default drift across 23 direct-`CNNLSTMModel`-construction
+    scripts — found, not fixed, Aug 19 2026**: see the full writeup at the
+    end of this list (kept as item #30 for continuity with the pre-existing
+    numbering at the time this was found — do not renumber).
+
+37. **`quantile_head` and `focal_weight` are alternative extreme-day
+    strategies selected by config, not auto-detected — `_step()` branches on
+    `self.focal_weight` only after checking it, but a config that sets
+    `focal_weight: true` while leaving a stale `quantile_head: true` from a
+    copy-pasted `full_gnll_quantile` config would raise loudly at
+    `CNNLightningModule.__init__` (mutual-exclusion `ValueError`), not run
+    silently with the wrong branch — confirmed by construction
+    ([cnn_lstm.py](../src/models/cnn_lstm.py), the `if focal_weight and
+    quantile_head: raise` check added alongside `focal_weight` itself).
+    Flagged by the user before launch as a risk to double check when copying
+    `full_gnll_quantile/fold*.yaml` as a template for `full_gnll_focal` —
+    confirmed the `full_gnll_focal` configs set `quantile_head: false`,
+    `focal_weight: true`, `return_target_doy: true` correctly. Separately: if
+    `focal_weight: true` but `return_target_doy` is missing/false, `_step()`'s
+    `x_spatial, x_temporal, y, target_doy = batch` unpack fails with a loud
+    `ValueError` (not enough values to unpack) — also a fail-loud, not a
+    silent-bug, path.
+
+38. **`focal_weight`/`focal_alpha` not persisted in `model_config.json` —
+    known gap, Aug 20 2026**: `save_model_config()`/`CNNLSTM_MODEL_KEYS`
+    ([checkpoints.py](../src/utils/checkpoints.py)) cover only
+    `CNNLSTMModel` architecture kwargs; `focal_weight`/`focal_alpha` are
+    `CNNLightningModule` training-time loss parameters, not needed to
+    reconstruct the model for eval/XAI, so this is not a correctness bug.
+    But it means reporting these values (e.g. in a paper) requires reading
+    the original fold yaml or the W&B run config, not `model_config.json`.
+    Flagged by the user, not fixed (deliberately out of scope — would mean
+    widening `CNNLSTM_MODEL_KEYS`'s contract to cover training-time params,
+    not just architecture).
+
+39. **`p90_by_doy` not restored on checkpoint load — known gap, Aug 20
+    2026**: `CNNLightningModule.__init__` does
+    `self.register_buffer("p90_by_doy", ...)` when `focal_weight=True`, but
+    `save_hyperparameters(ignore=["model", "p90_by_doy"])` excludes it from
+    the saved hyperparameters, and no other mechanism restores it —
+    `load_from_checkpoint()` on a focal-weighted checkpoint leaves
+    `p90_by_doy` as whatever (or `None`) the caller passes at reconstruction
+    time. Does not affect current eval/XAI scripts (they only ever run
+    inference through `forward()`/GNLL, never recompute the focal-weighted
+    training loss at eval time). Would need `p90_by_doy` recomputed
+    (`load_ns_p90()`) and passed explicitly by any future script that wants
+    to report focal-weighted loss values on held-out data. Flagged by the
+    user, not fixed.
+
 ## How to use
 For each script or memory doc reviewed, check against all 29 items and
 report: applies / does not apply / unclear — with the specific line as
