@@ -65,3 +65,63 @@ opposite of standard boolean convention. `dataset.py` inverts this at load time:
 self.is_land = (land_mask == 0)   # True where land → set to NaN
 ```
 Do not use `land_mask` directly as a boolean without inverting.
+
+**`merged_daily.nc` has TWO land masks, and `land_mask` has a known grid bug**
+There are two mask variables: `land_mask` (built from `land_mask_05.nc`, the
+SST/atmosphere mask) and `land_mask_tbottom` (built from `land_mask_tbottom_05.nc`,
+ptho_bot's own mask). Both follow the same 1=ocean convention, but they are **not**
+interchangeable:
+
+- `land_mask` (the SST-derived one) has a confirmed bug: its source file,
+  `land_mask_05.nc`, sits on a latitude grid offset by 0.25° from the ERA5
+  target grid used by everything else (140 grid points, `[0.25, 0.75, ...]`,
+  vs the target's 141 points, `[0.0, 0.5, ...]`). The merge step
+  (`preprocess_all.py`) regrids it onto the target grid with nearest-neighbour
+  interpolation, which silently snaps this offset — the result is a coastline
+  shifted by about one pixel almost everywhere in the domain (572 pixels,
+  every coastline, confirmed uniform — not a few bad spots).
+- `land_mask_tbottom` does **not** have this problem — its source file is
+  already on the correct, ERA5-aligned grid.
+
+Found Aug 18 2026 while investigating spurious coastal sign-flip artifacts in
+`ptho_bot`'s signed-IG maps: `dataset.py` was masking `ptho_bot` with the buggy
+`land_mask` instead of `land_mask_tbottom`, silently zeroing 572 pixels of real,
+physically valid bottom-temperature data on every single training sample. Fixed
+in `dataset.py` — `ptho_bot` now uses `land_mask_tbottom` specifically; every
+other ocean variable still uses `land_mask` (there currently aren't any others
+in the active TbotAtm configs, so this is the variable that actually mattered).
+
+**The root cause (the grid offset in `land_mask_05.nc` itself) is fixed only at
+the source script**, `preprocess_all.py` (lives outside this git repo, at
+`/p/project1/hai_1127/inputs/daily/preprocess_data/`), so a *future* full
+regeneration of `merged_daily.nc` from raw sources will produce a correct
+`land_mask` automatically. The *current* `merged_daily.nc` on disk still has
+the old, buggy `land_mask` — it was not modified in place (that would be a
+high-risk edit to a 9.9 GB file everyone reads from; the safety check blocked
+it and the user chose the safer path instead). A corrected copy already exists
+at `merged_daily_v2.nc` (same directory): `land_mask` there is replaced with
+`land_mask_tbottom`'s values; every other variable (`to_anom`, `ptho_bot`,
+`u10`, `v10`, `msl`, `ssr`, `target`, `land_mask_tbottom`) is verified
+byte-identical to the original.
+
+**UPDATE Aug 18 2026 — `merged_daily_v2.nc` promoted to canonical for the
+`full_mse_v2` re-launch.** The "nothing points to it yet" decision above is
+now partially superseded: `configs/partition/full_mse_v2/fold{0-4}.yaml` use
+`merged_daily_v2.nc` as `data_dir`, specifically so that `land_mask` and
+`land_mask_tbottom` are the same array for every variable (`to_anom`,
+`ptho_bot`, ERA5) — no more per-variable mask special-casing risk. Verified
+before use: `land_mask` (v2) == `land_mask_tbottom` (v2) exactly (`np.array_equal`
+True); every other variable (`to_anom`, `ptho_bot`, `u10`, `v10`, `msl`, `ssr`,
+`target`, `land_mask_tbottom`) is byte-identical to `merged_daily.nc` (verified
+directly, not assumed); 572 pixels changed in `land_mask` vs v1, all on
+coastlines (see comparison PNGs generated Aug 18 2026). **Other configs not
+yet migrated** (`configs/partition/full_gnll/*`, `configs/kfold/*`, etc.) still
+point at `merged_daily.nc` — migrate them individually when/if they are
+relaunched, do not assume the switch is repo-wide. Full writeup and
+before/after comparison figures: `known_issues.md` #2 and
+`audit_plan.md` → "Pending decision — land_mask grid-offset fix".
+
+**Also relevant to any relaunch**: `known_issues.md` #28 — `dataset.py` was
+silently re-subtracting a second, mismatched-window climatology on top of the
+already-anomalised variables described above. Fixed Aug 18 2026, same day as
+this land-mask migration. Both fixes are in `configs/partition/full_mse_v2/`.

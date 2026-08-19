@@ -40,6 +40,94 @@ def _integrated_gradients(lightning_module, x_spatial, x_temporal, n_steps=50):
     return attributions.cpu()
 
 
+def _integrated_gradients_forward(model, x_spatial, x_temporal, n_steps=50):
+    """
+    Signed IG using raw model.forward() — for lstm_only (no attention).
+    model: CNNLSTMModel (not LightningModule).
+    Returns: (window, n_vars, lat, lon) on CPU.
+    """
+    baseline = torch.zeros_like(x_spatial)
+    grads = []
+
+    for step in range(n_steps):
+        alpha = step / (n_steps - 1)
+        interp = (baseline + alpha * (x_spatial - baseline)).requires_grad_(True)
+        prev = torch.backends.cudnn.enabled
+        torch.backends.cudnn.enabled = False
+        pred = model(interp.float(), x_temporal.float())
+        pred.squeeze().backward()
+        torch.backends.cudnn.enabled = prev
+        grads.append(interp.grad.detach().squeeze(0).clone())
+
+    avg_grads = torch.stack(grads).mean(dim=0)
+    attributions = (x_spatial.squeeze(0) - baseline.squeeze(0)) * avg_grads
+    return attributions.cpu()
+
+
+def smoothgrad(
+    lightning_module,
+    x_spatial,
+    x_temporal,
+    n_steps=50,
+    n_samples=20,
+    sigma=0.1,
+):
+    """
+    SmoothGrad: average IG over multiple noise-augmented copies of the input.
+
+    Reduces high-frequency artefacts (e.g. the 8 px periodic grid from
+    MaxPool2d) while preserving spatial structure.
+
+    Args:
+        lightning_module: CNNLightningModule
+        x_spatial:   (1, window, C, H, W)
+        x_temporal:  (1, window, 3)
+        n_steps:     IG integration steps
+        n_samples:   number of noisy runs to average
+        sigma:       noise std as fraction of input range (x.max - x.min)
+    Returns:
+        attributions: (window, C, H, W) on CPU
+    """
+    x_range = x_spatial.max() - x_spatial.min()
+    noise_std = sigma * x_range.item()
+
+    acc = torch.zeros_like(x_spatial.squeeze(0))  # (window, C, H, W)
+    for i in range(n_samples):
+        noisy = (x_spatial + torch.randn_like(x_spatial) * noise_std).to(
+            x_spatial.device
+        )
+        attr = _integrated_gradients(
+            lightning_module, noisy, x_temporal, n_steps=n_steps
+        )
+        acc += attr
+    return acc / n_samples
+
+
+def smoothgrad_forward(
+    model,
+    x_spatial,
+    x_temporal,
+    n_steps=50,
+    n_samples=20,
+    sigma=0.1,
+):
+    """
+    SmoothGrad using raw model.forward() — for lstm_only (no attention).
+    model: CNNLSTMModel (not LightningModule).
+    """
+    x_range = x_spatial.max() - x_spatial.min()
+    noise_std = sigma * x_range.item()
+
+    acc = torch.zeros_like(x_spatial.squeeze(0))
+    for i in range(n_samples):
+        noisy = (x_spatial + torch.randn_like(x_spatial) * noise_std).to(
+            x_spatial.device
+        )
+        attr = _integrated_gradients_forward(model, noisy, x_temporal, n_steps=n_steps)
+        acc += attr
+    return acc / n_samples
+
+
 def _integrated_gradients_full(lightning_module, x_spatial, x_temporal, n_steps=50):
     """
     Like _integrated_gradients but also attributes x_temporal (year_norm, month_sin, month_cos).

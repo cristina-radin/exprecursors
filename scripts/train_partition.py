@@ -145,6 +145,7 @@ def main():
         dropout=config.get("dropout", 0.2),
         arch=config.get("arch", "lstm_only"),
         gaussian_nll=config.get("gaussian_nll", False),
+        pooling=config.get("pooling", "max"),
     )
 
     LightningClass = MODE_MAP[args.mode]
@@ -154,6 +155,7 @@ def main():
         target_mean=datamodule.target_mean,
         target_std=datamodule.target_std,
         loss_fn=config.get("loss_fn", "MSELoss"),
+        gaussian_nll=config.get("gaussian_nll", False),
     )
 
     callbacks = [

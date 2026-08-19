@@ -27,6 +27,11 @@ class AttentionGradCAM:
         self.model = lightning_module.model
         self._acts = None
         self._grads = None
+        # arch="lstm_only" never builds self.attention (see cnn_lstm.py —
+        # only arch != "lstm_only" creates TemporalAttention), so
+        # forward_with_attention() would raise AttributeError on
+        # self.attention.attn(...). Branch instead of crashing.
+        self.is_lstm_only = getattr(self.model, "attention", None) is None
 
         target_layer = self._find_last_conv()
         target_layer.register_forward_hook(self._save_act)
@@ -49,17 +54,22 @@ class AttentionGradCAM:
     def compute(self, x_spatial, x_temporal):
         """
         Returns:
-            cam:          (lat, lon)  — attention-weighted spatial importance [0, 1]
-            attn_weights: (window,)   — temporal attention weights
+            cam:          (lat, lon)  — spatial importance [0, 1]
+            attn_weights: (window,) softmax attention weights, or None for
+                arch="lstm_only" (no attention module exists — see __init__).
         """
         # cuDNN LSTM requires the same backend for forward+backward.
         # In eval mode backward is not supported, so disable cuDNN for both.
         prev = torch.backends.cudnn.enabled
         torch.backends.cudnn.enabled = False
         self.model.zero_grad()
-        pred, attn = self.model.forward_with_attention(
-            x_spatial.float(), x_temporal.float()
-        )
+        if self.is_lstm_only:
+            pred = self.model(x_spatial.float(), x_temporal.float())
+            attn = None
+        else:
+            pred, attn = self.model.forward_with_attention(
+                x_spatial.float(), x_temporal.float()
+            )
         pred.squeeze().backward()
         torch.backends.cudnn.enabled = prev
 
@@ -69,13 +79,25 @@ class AttentionGradCAM:
 
         acts = self._acts.detach()  # (window, C, H', W')
         grads = self._grads.detach()
-        attn_w = attn.squeeze(0).detach()  # (window,)
 
         cam = torch.zeros(acts.shape[2], acts.shape[3], device=acts.device)
-        for t in range(window):
-            w_t = grads[t].mean(dim=(1, 2), keepdim=True)  # (C,1,1)
-            cam_t = F.relu((w_t * acts[t]).sum(dim=0))  # (H',W')
-            cam = cam + attn_w[t] * cam_t
+        if self.is_lstm_only:
+            # No attention score exists to weight cam_t by. The LSTM's own
+            # backprop-through-time already attenuates grad_t for timesteps
+            # it relied on less to form the last hidden state (the only one
+            # the FC head sees, lstm_out[:, -1, :]) — so cam_t's own
+            # magnitude already carries that weighting; sum unweighted.
+            attn_w = None
+            for t in range(window):
+                w_t = grads[t].mean(dim=(1, 2), keepdim=True)  # (C,1,1)
+                cam_t = F.relu((w_t * acts[t]).sum(dim=0))  # (H',W')
+                cam = cam + cam_t
+        else:
+            attn_w = attn.squeeze(0).detach()  # (window,)
+            for t in range(window):
+                w_t = grads[t].mean(dim=(1, 2), keepdim=True)  # (C,1,1)
+                cam_t = F.relu((w_t * acts[t]).sum(dim=0))  # (H',W')
+                cam = cam + attn_w[t] * cam_t
 
         cam = cam / (cam.max() + 1e-8)
         cam = (
@@ -90,7 +112,7 @@ class AttentionGradCAM:
             .numpy()
         )
 
-        return cam, attn_w.cpu().numpy()
+        return cam, (attn_w.cpu().numpy() if attn_w is not None else None)
 
 
 # ---------------------------------------------------------------------------

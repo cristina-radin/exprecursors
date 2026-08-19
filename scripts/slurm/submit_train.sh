@@ -17,8 +17,8 @@
 #SBATCH --time=04:00:00
 #SBATCH --job-name=partition
 #SBATCH --array=0-4
-#SBATCH --output=slurm-partition-%x-%j.out
-#SBATCH --error=slurm-partition-%x-%j.err
+#SBATCH --output=slurm-partition-%x-%A_%a.out
+#SBATCH --error=slurm-partition-%x-%A_%a.err
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=${SLURM_MAIL:-}
 

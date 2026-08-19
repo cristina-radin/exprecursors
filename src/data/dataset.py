@@ -5,10 +5,13 @@ Input:  sliding window of `window_size` days → [window_size, n_vars, lat, lon]
 Target: mean SST anomaly over North Sea at t + lead_time (scalar, normalized)
 
 Anomalisation:
-  to_anom  — already an anomaly (ICON-COAST, ref 1985-2014); left unchanged.
-  u10, v10, msl, ssr — ERA5 absolute values; day-of-year climatology subtracted
-                       here using reference period 1985-2014, 5-day running window,
-                       consistent with the CDO preprocessing of to_anom.
+  All variables in merged_daily.nc (to_anom, ptho_bot, u10, v10, msl, ssr) are
+  already anomalies — climatology (day-of-year mean, ±5-day window, ref
+  1985-2014) is removed upstream in preprocess_all.py. This module does NOT
+  subtract any further climatology (see docs/data.md). A prior version of this
+  docstring/code re-subtracted a second, mismatched-window (±2-day) climatology
+  for every variable except to_anom — found and removed 2026-08-18
+  (known_issues.md, double-anomalisation bug).
 """
 
 from typing import Tuple
@@ -51,7 +54,7 @@ class LazyDataset(Dataset):
         self.detrend_variables = set(config.get("detrend_variables", []))
         self.detrend_target = config.get("detrend_target", False)
 
-        self.ds = xr.open_mfdataset(file_name, parallel=True)
+        self.ds = xr.open_mfdataset(file_name, parallel=True, engine="netcdf4")
 
         # Temporal coordinates
         self.years = self.ds.time.dt.year.values
@@ -60,9 +63,27 @@ class LazyDataset(Dataset):
         self.year_min = self.years.min()
         self.year_max = self.years.max()
 
-        # Land mask: True where land — only applied to ocean variables
+        # Land mask: True where land — only applied to ocean variables.
+        # ptho_bot has its OWN native land/ocean boundary (land_mask_tbottom),
+        # 572 pixels different from the SST/atmosphere land_mask (known_issues.md
+        # #2). Using land_mask for ptho_bot falsely zeros 572 real ocean pixels,
+        # creating an artificial land/ocean edge in the input the CNN reacts to.
         land_mask = torch.tensor(self.ds["land_mask"].values, dtype=torch.float32)
         self.is_land = land_mask == 0
+        self.land_masks = {}
+        for var in self.ocean_variables:
+            if var == "ptho_bot":
+                if "land_mask_tbottom" not in self.ds:
+                    raise ValueError(
+                        "ptho_bot is an ocean_variable but 'land_mask_tbottom' "
+                        "is not in the dataset — cannot mask it correctly."
+                    )
+                tbottom_mask = torch.tensor(
+                    self.ds["land_mask_tbottom"].values, dtype=torch.float32
+                )
+                self.land_masks[var] = tbottom_mask == 0
+            else:
+                self.land_masks[var] = self.is_land
 
         # Pre-load variables into memory
         print("Loading data into memory...")
@@ -96,17 +117,16 @@ class LazyDataset(Dataset):
 
     def _compute_clim(self) -> None:
         """
-        Compute day-of-year running-mean climatology for ERA5 variables
-        (all variables except to_anom, which is already an anomaly).
+        No-op: every variable in merged_daily.nc is already a day-of-year
+        anomaly, computed upstream in preprocess_all.py (see docs/data.md).
+        self.clim_means is left empty, so __getitem__ and compute_stats()
+        skip the climatology-subtraction branch entirely.
 
-        Reference period : clim_ref_start – clim_ref_end (default 1985-2014).
-        Window           : ±(clim_window//2) days (default 5, consistent with
-                           CDO ydrunmean,5 used for to_anom preprocessing).
-        Leap day (DOY 366) mapped to DOY 365 (Dec 31).
-
-        Result stored in self.clim_means: {var: tensor(365, lat, lon)}.
+        Kept as a method (rather than deleted outright) so a future dataset
+        file that ships absolute values can restore per-variable climatology
+        by populating vars_to_anom again.
         """
-        vars_to_anom = [v for v in self.variables if v != "to_anom"]
+        vars_to_anom = []
         if not vars_to_anom:
             return
 
@@ -237,7 +257,7 @@ class LazyDataset(Dataset):
                     data[i] -= self.clim_means[var][doy - 1]
 
             if var in self.ocean_variables:
-                data[:, self.is_land] = float("nan")
+                data[:, self.land_masks[var]] = float("nan")
                 mean = float(torch.nanmean(data))
                 std = float(torch.std(data[~torch.isnan(data)])) + 1e-8
             else:
@@ -297,7 +317,7 @@ class LazyDataset(Dataset):
             # Land mask (ocean variables only)
             for i, var in enumerate(self.variables):
                 if var in self.ocean_variables:
-                    frame[i, self.is_land] = float("nan")
+                    frame[i, self.land_masks[var]] = float("nan")
 
             # Subtract day-of-year climatology (ERA5 variables only)
             if self.clim_means:

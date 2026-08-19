@@ -180,6 +180,59 @@ Fase 4-bis).
 
 ---
 
+## Hypothesis: mechanism behind local/remote redundancy
+
+_Aug 17 2026_
+
+**H1 (atmospheric bridge):** the redundancy between Local-only (r=0.906) and
+Full (r=0.852) reflects a shared atmospheric pathway — remote circulation
+state (correlated with Gulf Stream position) modulates the North Atlantic
+storm track / NAO-like patterns, which reach the North Sea as local wind/
+pressure forcing. Prediction: Full's spatial IG attribution in the remote
+region should overlap with u10/v10/msl patterns, not with to_anom/ptho_bot
+patterns, and should resemble what Remote-only produces independently in
+that same region.
+
+**H0 (no shared structure):** redundancy is a numerical coincidence with no
+shared spatial pattern — local and remote channels reach similar skill via
+unrelated routes.
+
+**Falsification test:** compare spatial IG maps (Full vs. Remote-only vs.
+Local-only, TbotAtm, this week's clean checkpoints) — check which variable
+class overlaps between Full-remote-region and Remote-only.
+
+**Literature grounding (Aug 17 verification):**
+- Climate modes synergistically influence MHW in the North Sea (Ocean
+  Science, 2026): winter southern-NS MHW variability regulated by EAP via
+  two pathways — atmospheric (strengthened SW winds) and oceanic (Atlantic
+  inflow/MOC); positive NAO intensifies winter MHW occurrence. Confirms
+  both pathways coexist and are separable — directly supports testing H1
+  vs. an oceanic alternative, not assuming one.
+- Drivers of the extreme North Atlantic MHW 2023 (Nature, 2025): dominant
+  driver was anomalously weak winds over an extremely shallow mixed layer,
+  not anomalous ocean heat transport — supports the atmospheric-pathway
+  side specifically for North Atlantic basin-scale events.
+- Atmospheric patterns drive MHWs in North Atlantic/Mediterranean summer
+  2023 (2025): NAO-/SCAN+ compound configurations generate persistent
+  ridges, weaken the Azores High, suppress winds, alter heat flux and MLD,
+  promote stratification — gives the specific circulation-index mechanism
+  (NAO/SCAN/EAP) that a "remote circulation state" in H1 would concretely
+  correspond to.
+
+**Honest framing for presentation:** if H1 confirms, the contribution is
+methodological validation — showing the model (trained with no explicit
+NAO/EAP index) recovers a known atmospheric-bridge mechanism via XAI,
+addressing the EGU reviewer critique that "IG shows association, not
+causation." This is not a novel physical mechanism (NAO/EAP-driven NS MHW
+is established in the cited literature) — it is evidence that the model's
+learned redundancy has a real physical basis rather than being spurious.
+If H0 (no overlap in wind/pressure), that would be the more novel finding,
+pointing to an undocumented pathway.
+
+_Status: pending IG maps from job 14200537 (ETA ~3h)._
+
+---
+
 ## Open scientific questions
 
 <!-- Things not settled yet. Remove entries when resolved. -->

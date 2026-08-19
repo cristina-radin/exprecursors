@@ -16,8 +16,8 @@
 #SBATCH --time=04:00:00
 #SBATCH --job-name=local_only_tr
 #SBATCH --array=0-4
-#SBATCH --output=slurm-local_only-%x-%j.out
-#SBATCH --error=slurm-local_only-%x-%j.err
+#SBATCH --output=slurm-local_only-%x-%A_%a.out
+#SBATCH --error=slurm-local_only-%x-%A_%a.err
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=${SLURM_MAIL:-}
 

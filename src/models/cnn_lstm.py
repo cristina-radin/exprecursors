@@ -27,24 +27,35 @@ class CNNEncoder(nn.Module):
     Args:
         in_channels: number of input variables (e.g. 5)
         out_features: size of the output feature vector
+        pooling: "max" (default, original architecture) or "avg". AvgPool
+            spreads the IG/gradient backward pass over the full 2×2 window
+            instead of routing it through a single argmax position — avoids
+            the ~8px periodic grid artifact documented in known_issues.md #26
+            (vanilla-gradient saliency through 3 cascaded MaxPool2d layers).
+            Changes only these 3 pooling layers, not AdaptiveAvgPool2d at the
+            end (already an avg-pool, unaffected either way).
     """
 
-    def __init__(self, in_channels: int, out_features: int = 128):
+    def __init__(self, in_channels: int, out_features: int = 128, pooling: str = "max"):
         super().__init__()
+
+        if pooling not in ("max", "avg"):
+            raise ValueError(f"pooling must be 'max' or 'avg', got {pooling!r}")
+        Pool2d = nn.MaxPool2d if pooling == "max" else nn.AvgPool2d
 
         self.cnn = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.MaxPool2d(2),  # 141×201 → 70×100
+            Pool2d(2),  # 141×201 → 70×100
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2),  # 70×100 → 35×50
+            Pool2d(2),  # 70×100 → 35×50
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.MaxPool2d(2),  # 35×50 → 17×25
+            Pool2d(2),  # 35×50 → 17×25
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
@@ -105,6 +116,7 @@ class CNNLSTMModel(nn.Module):
         lstm_layers:     number of LSTM layers
         temporal_features: number of temporal scalar features (year, sin, cos = 3)
         dropout:         dropout in LSTM
+        pooling:         "max" (default) or "avg" — see CNNEncoder docstring
     """
 
     def __init__(
@@ -117,30 +129,47 @@ class CNNLSTMModel(nn.Module):
         dropout: float = 0.3,
         arch: str = "lstm_only",
         gaussian_nll: bool = False,
+        pooling: str = "max",
     ):
         super().__init__()
 
         self.temporal_features = temporal_features
         self.arch = arch
-        self.cnn_encoder = CNNEncoder(in_channels, out_features=cnn_features)
-
-        self.lstm = nn.LSTM(
-            input_size=cnn_features,
-            hidden_size=lstm_hidden,
-            num_layers=lstm_layers,
-            batch_first=True,
-            dropout=dropout if lstm_layers > 1 else 0.0,
+        self.gaussian_nll = gaussian_nll
+        self.pooling = pooling
+        self.cnn_encoder = CNNEncoder(
+            in_channels, out_features=cnn_features, pooling=pooling
         )
 
-        if arch != "lstm_only":
-            self.attention = TemporalAttention(lstm_hidden)
+        if arch == "attention_only":
+            # True CNN + Attention, no recurrence: attention operates directly
+            # on the per-timestep CNN features. Previously this branch still
+            # built and ran an LSTM (arch only changed the pooling *after* the
+            # LSTM), making "attention_only" structurally identical to
+            # "lstm_attention" — see project_arch_naming_bug memory.
+            self.lstm = None
+            context_dim = cnn_features
+        else:
+            self.lstm = nn.LSTM(
+                input_size=cnn_features,
+                hidden_size=lstm_hidden,
+                num_layers=lstm_layers,
+                batch_first=True,
+                dropout=dropout if lstm_layers > 1 else 0.0,
+            )
+            context_dim = lstm_hidden
 
-        # FC head: LSTM/attention features (+ temporal features if any) → scalar
+        if arch != "lstm_only":
+            self.attention = TemporalAttention(context_dim)
+
+        # FC head: LSTM/attention/CNN-attention features (+ temporal features
+        # if any) → [mean, log_var] if gaussian_nll else [mean] only.
+        out_dim = 2 if gaussian_nll else 1
         self.fc = nn.Sequential(
-            nn.Linear(lstm_hidden + temporal_features, 64),
+            nn.Linear(context_dim + temporal_features, 64),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(64, 1),
+            nn.Linear(64, out_dim),
         )
 
     def forward(
@@ -153,7 +182,7 @@ class CNNLSTMModel(nn.Module):
             x_spatial:  (batch, window_size, n_vars, lat, lon)
             x_temporal: (batch, window_size, 3)
         Returns:
-            (batch, 1)
+            (batch, 2) — [mean, log_var] if gaussian_nll else (batch, 1) — [mean]
         """
         batch, window, n_vars, lat, lon = x_spatial.shape
 
@@ -162,13 +191,16 @@ class CNNLSTMModel(nn.Module):
         features = self.cnn_encoder(x_flat)  # (batch*window, cnn_features)
         features = features.view(batch, window, -1)  # (batch, window, cnn_features)
 
-        # LSTM over the sequence
-        lstm_out, _ = self.lstm(features)  # (batch, window, lstm_hidden)
-
-        if self.arch == "lstm_only":
-            context = lstm_out[:, -1, :]  # last timestep, no attention
+        if self.arch == "attention_only":
+            context = self.attention(
+                features
+            )  # attention directly over CNN features, no LSTM
         else:
-            context = self.attention(lstm_out)  # (batch, lstm_hidden)
+            lstm_out, _ = self.lstm(features)  # (batch, window, lstm_hidden)
+            if self.arch == "lstm_only":
+                context = lstm_out[:, -1, :]  # last timestep, no attention
+            else:
+                context = self.attention(lstm_out)  # (batch, lstm_hidden)
 
         if self.temporal_features > 0:
             temporal_summary = x_temporal.mean(dim=1)
@@ -193,11 +225,13 @@ class CNNLSTMModel(nn.Module):
         x_flat = x_spatial.view(batch * window, n_vars, lat, lon)
         features = self.cnn_encoder(x_flat).view(batch, window, -1)
 
-        lstm_out, _ = self.lstm(features)
+        attn_input = (
+            features if self.arch == "attention_only" else self.lstm(features)[0]
+        )
 
-        scores = self.attention.attn(lstm_out).squeeze(-1)  # (batch, window)
+        scores = self.attention.attn(attn_input).squeeze(-1)  # (batch, window)
         attn_weights = torch.softmax(scores, dim=-1)  # (batch, window)
-        context = (lstm_out * attn_weights.unsqueeze(-1)).sum(dim=1)
+        context = (attn_input * attn_weights.unsqueeze(-1)).sum(dim=1)
 
         if self.temporal_features > 0:
             temporal_summary = x_temporal.mean(dim=1)
@@ -221,6 +255,7 @@ class CNNLightningModule(pl.LightningModule):
         target_mean: float = 0.0,
         target_std: float = 1.0,
         loss_fn: str = "MSELoss",
+        gaussian_nll: bool = False,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -229,7 +264,11 @@ class CNNLightningModule(pl.LightningModule):
         self.learning_rate = learning_rate
         self.target_mean = target_mean
         self.target_std = target_std
-        self.loss_fn = nn.L1Loss() if loss_fn == "MAELoss" else nn.MSELoss()
+        self.gaussian_nll = gaussian_nll
+        if gaussian_nll:
+            self.loss_fn = nn.GaussianNLLLoss()
+        else:
+            self.loss_fn = nn.L1Loss() if loss_fn == "MAELoss" else nn.MSELoss()
 
         self.test_mae = MeanAbsoluteError()
         self.test_corr = PearsonCorrCoef()
@@ -240,29 +279,43 @@ class CNNLightningModule(pl.LightningModule):
     def forward(self, x_spatial, x_temporal):
         return self.model(x_spatial.float(), x_temporal.float())
 
+    def _loss_and_pred(self, y_hat, y):
+        """
+        y_hat: (batch, 2) [mean, log_var] if gaussian_nll else (batch, 1) [mean].
+        Returns (loss, pred) where pred is always (batch, 1) — the mean, for
+        metrics/logging/plots (all downstream code expects a single value).
+        """
+        if self.gaussian_nll:
+            mean = y_hat[:, 0:1]
+            log_var = y_hat[:, 1:2].clamp(min=-10.0, max=10.0)  # numerical stability
+            var = torch.exp(log_var)
+            loss = self.loss_fn(mean, y, var)
+            return loss, mean
+        return self.loss_fn(y_hat, y), y_hat
+
     def training_step(self, batch, batch_idx):
         x_spatial, x_temporal, y = batch
         y_hat = self(x_spatial, x_temporal)
-        loss = self.loss_fn(y_hat, y)
+        loss, _ = self._loss_and_pred(y_hat, y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x_spatial, x_temporal, y = batch
         y_hat = self(x_spatial, x_temporal)
-        loss = self.loss_fn(y_hat, y)
+        loss, _ = self._loss_and_pred(y_hat, y)
         self.log("val_loss", loss, on_epoch=True, prog_bar=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         x_spatial, x_temporal, y = batch
         y_hat = self(x_spatial, x_temporal)
-        loss = self.loss_fn(y_hat, y)
+        loss, pred = self._loss_and_pred(y_hat, y)
 
-        self.test_mae.update(y_hat.squeeze(), y.squeeze())
-        self.test_corr.update(y_hat.squeeze(), y.squeeze())
+        self.test_mae.update(pred.squeeze(), y.squeeze())
+        self.test_corr.update(pred.squeeze(), y.squeeze())
 
-        self.test_preds.append(y_hat.detach().cpu())
+        self.test_preds.append(pred.detach().cpu())
         self.test_targets.append(y.detach().cpu())
 
         self.log("test_loss", loss, on_epoch=True)

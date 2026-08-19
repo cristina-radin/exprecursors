@@ -1,4 +1,4 @@
-data_dir: ""
+data_dir: /p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc
 variables:
 - ptho_bot
 - u10

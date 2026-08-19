@@ -671,6 +671,42 @@ Priority fix order before any spatial onset maps are cited:
 
 ---
 
+## Pending decision — land_mask grid-offset fix (Aug 18 2026, NOT applied yet)
+
+Full detail in `known_issues.md` #2. One-line status for quick reference:
+`land_mask_05.nc` (source of the `land_mask` variable in `merged_daily.nc`)
+has a confirmed 0.25° latitude grid-offset bug vs the ERA5 target grid
+(140 vs 141 points) — causes a systematic ~1px coastal misalignment,
+uniform across the whole domain (572 pixels, every coastline, not
+concentrated anywhere). `land_mask_tbottom_05.nc` is already correctly
+aligned. Root cause traced and fixed at the source
+(`/p/project1/hai_1127/inputs/daily/preprocess_data/preprocess_all.py`,
+outside this repo) so future full regenerations won't reintroduce it.
+
+**A corrected data file already exists and is verified**:
+`/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily_v2.nc` —
+`land_mask` replaced with `land_mask_tbottom`'s (correct) values; every
+other variable (`to_anom`, `ptho_bot`, `u10`, `v10`, `msl`, `ssr`, `target`,
+`land_mask_tbottom`) confirmed byte-identical to the original. Comparison
+figures: `figures/sst_vs_tbot_mask_comparison{,_AFTER_FIX}.png`,
+`figures/mask_mismatch_full_domain{,_AFTER_FIX}.png`.
+
+**Explicit decision (user, Aug 18 2026): do NOT migrate or rerun anything
+now.** `merged_daily.nc` (original) stays canonical; no config points to
+`_v2`. Practical urgency is low for current TbotAtm work — `dataset.py`'s
+earlier per-variable mask fix already routes ptho_bot through the
+(already-correct) `land_mask_tbottom` directly, bypassing the buggy
+`land_mask` variable for the one ocean variable current TbotAtm configs
+actually mask. `merged_daily_v2.nc` mainly matters for SSTAtm/Atm-family
+pipelines that mask `to_anom` (or anything else) via the generic
+`land_mask` field — not yet audited which configs do that.
+
+**If/when a rerun is ever decided**: use `merged_daily_v2.nc`, not
+`merged_daily.nc` — that's the whole point of having it ready. Until then,
+this is parked, not forgotten.
+
+---
+
 ## Permanent / no phase needed
 - feedback_ask_before_acting.md — KEEP (standing rule)
 - feedback_xai_and_loss.md — KEEP (standing rule)
