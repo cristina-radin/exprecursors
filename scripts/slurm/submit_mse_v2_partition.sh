@@ -12,8 +12,8 @@
 #
 # Usage:
 #   source .env   # must have WANDB_ENTITY and WANDB_PROJECT set
-#   export SBATCH_ACCOUNT=your_account SBATCH_MAIL_USER=you@example.com
-#   sbatch --export=ALL scripts/slurm/submit_mse_v2_partition.sh
+#   export SBATCH_ACCOUNT=your_account   # --mail-user must be passed on the sbatch CLI (see comment above)
+#   sbatch --mail-user=you@example.com --export=ALL scripts/slurm/submit_mse_v2_partition.sh
 # (or: sbatch --account=... --mail-user=... --export=ALL ...)
 
 #SBATCH --partition=booster

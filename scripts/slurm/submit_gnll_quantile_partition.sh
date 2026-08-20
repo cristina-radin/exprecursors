@@ -24,8 +24,8 @@
 #
 # Usage:
 #   source .env   # must have WANDB_ENTITY and WANDB_PROJECT set
-#   export SBATCH_ACCOUNT=mmm_gpu SBATCH_MAIL_USER=you@example.com
-#   sbatch --export=ALL scripts/slurm/submit_gnll_quantile_partition.sh
+#   export SBATCH_ACCOUNT=mmm_gpu   # --mail-user must be passed on the sbatch CLI, NOT via env var (SLURM does not expand ${VAR} in #SBATCH lines, and SBATCH_MAIL_USER is not a real sbatch env override -- only SBATCH_ACCOUNT is)
+#   sbatch --mail-user=you@example.com --export=ALL scripts/slurm/submit_gnll_quantile_partition.sh
 # (or: sbatch --account=... --mail-user=... --export=ALL ...)
 
 #SBATCH --partition=gpu1

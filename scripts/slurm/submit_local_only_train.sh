@@ -1,13 +1,14 @@
 #!/bin/bash
 # Submit local-only training, all 5 folds.
 #
+# #SBATCH directives are read literally by sbatch, not through the shell —
+# ${VAR} does NOT get expanded there. --account and --mail-user must be
+# passed on the sbatch CLI instead.
+#
 # Usage:
-#   export SLURM_ACCOUNT=your_account
-#   export SLURM_MAIL=your@email.com
 #   source .env
-#   sbatch scripts/slurm/submit_local_only_train.sh
+#   sbatch --account=your_account --mail-user=you@example.com scripts/slurm/submit_local_only_train.sh
 
-#SBATCH --account=${SLURM_ACCOUNT:-your_account}
 #SBATCH --partition=booster
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -19,7 +20,6 @@
 #SBATCH --output=slurm-local_only-%x-%A_%a.out
 #SBATCH --error=slurm-local_only-%x-%A_%a.err
 #SBATCH --mail-type=FAIL
-#SBATCH --mail-user=${SLURM_MAIL:-}
 
 module --force purge
 module load Stages/2025

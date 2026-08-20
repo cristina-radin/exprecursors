@@ -35,10 +35,21 @@ NS_LAT = slice(100, 127)
 NS_LON = slice(150, 187)
 
 
-def get_test_years(unique_years, fold, n_folds=5):
-    rng = np.random.default_rng(0)
+def get_test_years(unique_years, fold, n_folds=5, seed=42):
+    """Must match src/data/datamodule.py's real kfold branch EXACTLY, not a
+    stand-in for it — this script's whole purpose is comparing against
+    "the same kfold test splits as the masked experiment" (see module
+    docstring). Previously used np.random.default_rng(0), a DIFFERENT RNG
+    algorithm and seed than production's np.random.RandomState(seed=42) —
+    known_issues.md #23/#1: RandomState and default_rng give different
+    permutations from the same seed, so this computed test years that never
+    matched what any real experiment was actually evaluated on. Fixed Aug
+    20 2026. seed=42 matches every full_gnll*/full_mse_v2 config's `seed:`.
+    """
+    rng = np.random.RandomState(seed)
     shuffled = rng.permutation(unique_years)
-    return set(np.array_split(shuffled, n_folds)[fold].tolist())
+    fold_size = len(unique_years) // n_folds
+    return set(shuffled[fold * fold_size : (fold + 1) * fold_size].tolist())
 
 
 def pearson(a, b):

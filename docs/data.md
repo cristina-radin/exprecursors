@@ -42,6 +42,19 @@ Standard daily SST anomaly: SST minus the daily climatological mean (±5-day win
 per day-of-year, reference period 1985–2014). Zero-centered.
 Never describe `to_anom` as "SST minus P90" — the model predicts a continuous anomaly value.
 
+**Known gap — `mean_clim` is not 31-day smoothed (`known_issues.md` #40)**:
+Hobday et al. 2016 prescribes smoothing both the climatological mean and the
+p90 threshold with an additional 31-day moving average after the windowed
+calculation. `p90_thresh` gets this (at runtime, `load_ns_p90()`) but
+`mean_clim` — and therefore `to_anom`/`target` — never has. Quantified: RMS
+0.046°C, max 0.131°C (NS-box mean) — real but modest, smaller than current
+model MAE. Opt-in fix available without regenerating raw data: config flag
+`hobday_smooth_target: true` (`LazyDataset`) applies the exact correction via
+`src/utils/hobday.py::load_ns_mean_clim_smooth_delta()`. Default `False` —
+no existing experiment's target changes unless a config explicitly opts in.
+Regenerating `mean_clim.nc` itself at the source (`preprocess_all.py`,
+outside this repo) is a separate, larger-blast-radius decision, not done.
+
 **`target`** — NS basin-mean of `to_anom` at 0.1° native resolution. Scalar per day.
 `dataset.py` additionally applies Z-score normalisation (training stats only) and
 optional linear detrending (`detrend_target`, default False).

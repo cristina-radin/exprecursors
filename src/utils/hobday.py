@@ -34,6 +34,33 @@ def load_ns_p90(smooth_days: int = 31, clim_file=CLIM_FILE) -> np.ndarray:
     return uniform_filter1d(p90, size=smooth_days, mode="wrap")
 
 
+def load_ns_mean_clim_smooth_delta(
+    smooth_days: int = 31, clim_file=CLIM_FILE
+) -> np.ndarray:
+    """Return delta[doy] = unsmoothed - smoothed NS-mean mean_clim, shape (365,).
+
+    Hobday et al. 2016 prescribes a 31-day smooth for BOTH the p90
+    threshold (already applied, see load_ns_p90) and the climatological
+    mean — but mean_clim.nc's mean_clim (the climatology to_anom/target
+    are built from) is only ever the raw 11-day-window CDO output, never
+    smoothed. Add this delta to a target/anomaly series built from the
+    unsmoothed mean_clim to get what it would be under the smoothed one:
+        to_anom_smoothed = SST - mean_clim_smoothed
+                          = to_anom_unsmoothed + (mean_clim_unsmoothed - mean_clim_smoothed)
+                          = to_anom_unsmoothed + delta
+    See known_issues.md for the RMS/max magnitude of this correction.
+    """
+    ds = xr.open_dataset(clim_file)
+    mean_clim = (
+        ds.mean_clim.sel(lat=_NS_LAT_SLICE, lon=_NS_LON_SLICE)
+        .mean(dim=["lat", "lon"], skipna=True)
+        .values
+    )
+    ds.close()
+    smoothed = uniform_filter1d(mean_clim, size=smooth_days, mode="wrap")
+    return mean_clim - smoothed
+
+
 def apply_hobday(
     exceedance: np.ndarray, min_dur: int = MIN_DURATION, max_gap: int = MAX_GAP
 ) -> np.ndarray:

@@ -14,13 +14,17 @@ Anomalisation:
   (known_issues.md, double-anomalisation bug).
 """
 
-from typing import Tuple
-
 import numpy as np
 import torch
 import xarray as xr
 import yaml
 from torch.utils.data import Dataset
+
+# NOTE: src.utils.hobday is intentionally imported lazily inside __init__
+# (only when hobday_smooth_target=True), not at module level here — it
+# transitively requires the MHW_CLIM_FILE env var (src.utils.paths.CLIM_FILE
+# raises at import time if unset), and dataset.py must stay importable
+# without that var for every existing config that doesn't use this flag.
 
 
 class LazyDataset(Dataset):
@@ -101,6 +105,35 @@ class LazyDataset(Dataset):
         self.target = torch.tensor(
             self.ds["target"].values, dtype=torch.float32
         )  # (time,)
+
+        # Opt-in: mean_clim.nc's mean_clim never received the 31-day smooth
+        # Hobday et al. 2016 also prescribes for the climatology mean (only
+        # p90_thresh gets it, at runtime — see known_issues.md). Correcting
+        # this shifts `target` itself (not just MHW classification), so it
+        # must run before compute_stats() computes target_mean/target_std.
+        # Default False — no existing config's target changes unless it
+        # explicitly opts in (same pattern as pooling/padding_mode).
+        self.hobday_smooth_target = config.get("hobday_smooth_target", False)
+        if self.hobday_smooth_target:
+            from src.utils.hobday import load_ns_mean_clim_smooth_delta
+
+            delta = load_ns_mean_clim_smooth_delta()  # (365,), physical units
+            doys_clamped = self.doys.copy()
+            doys_clamped[doys_clamped >= 365] = (
+                365  # leap day -> 365, same as elsewhere
+            )
+            delta_per_t = torch.tensor(delta[doys_clamped - 1], dtype=torch.float32)
+            target_mean_before = float(self.target.mean())
+            target_std_before = float(self.target.std())
+            self.target = self.target + delta_per_t
+            print(
+                f"  hobday_smooth_target=True: delta min={delta.min():.4f} "
+                f"max={delta.max():.4f} RMS={np.sqrt((delta**2).mean()):.4f} degC"
+            )
+            print(
+                f"  target mean/std before={target_mean_before:.4f}/{target_std_before:.4f}  "
+                f"after={float(self.target.mean()):.4f}/{float(self.target.std()):.4f}"
+            )
 
         print(f"  Variables:  {self.variables}")
         print(f"  Ocean vars: {sorted(self.ocean_variables)}")

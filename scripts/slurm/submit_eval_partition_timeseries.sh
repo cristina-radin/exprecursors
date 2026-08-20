@@ -12,7 +12,7 @@
 #
 # Usage:
 #   source .env
-#   export SBATCH_ACCOUNT=your_account SBATCH_MAIL_USER=you@example.com
+#   export SBATCH_ACCOUNT=your_account   # --mail-user must be passed on the sbatch CLI (see comment above)
 #   sbatch --export=ALL,PARTITION=full,MODEL_TAG=mse_v2 scripts/slurm/submit_eval_partition_timeseries.sh
 
 #SBATCH --partition=booster

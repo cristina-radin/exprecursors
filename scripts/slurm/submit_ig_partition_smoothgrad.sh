@@ -26,8 +26,8 @@
 #
 # Usage:
 #   source .env
-#   export SBATCH_ACCOUNT=your_account SBATCH_MAIL_USER=you@example.com
-#   sbatch --export=ALL,PARTITION=full,MODEL_TAG=mse_v2,FOLD=0,MAX_SAMPLES=300 \
+#   export SBATCH_ACCOUNT=your_account   # --mail-user must be passed on the sbatch CLI (see comment above)
+#   sbatch --mail-user=you@example.com --export=ALL,PARTITION=full,MODEL_TAG=mse_v2,FOLD=0,MAX_SAMPLES=300 \
 #       scripts/slurm/submit_ig_partition_smoothgrad.sh
 
 #SBATCH --partition=booster

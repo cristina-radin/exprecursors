@@ -138,6 +138,16 @@ def main():
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Mandatory output (plan rule, Aug 20 2026: "sacar las configs reales
+    # resueltas como output"): the exact resolved config this run is using,
+    # both in the SLURM/stdout log (readable without opening wandb) and as
+    # a standalone file in output_dir (survives after the run, unlike the
+    # log, and doesn't require network/wandb access to inspect later).
+    print(f"\n=== Resolved config: {args.config} ===")
+    print(yaml.dump(config, sort_keys=False, default_flow_style=False))
+    with open(output_dir / "resolved_config.yaml", "w") as f:
+        yaml.dump(config, f, sort_keys=False, default_flow_style=False)
+
     datamodule = LazyDataModule(config_path=args.config)
     datamodule.setup()
 
@@ -185,6 +195,9 @@ def main():
         focal_weight=focal_weight,
         focal_alpha=config.get("focal_alpha", 1.0),
         p90_by_doy=p90_by_doy,
+        lr_scheduler=config.get("lr_scheduler", "reduce_on_plateau"),
+        warmup_epochs=config.get("warmup_epochs", 5),
+        cosine_t_max_epochs=config.get("cosine_t_max_epochs"),
     )
 
     callbacks = [
@@ -234,7 +247,20 @@ def main():
     )
 
     trainer.fit(lightning_module, datamodule=datamodule)
-    trainer.test(lightning_module, datamodule=datamodule)
+    # ckpt_path=None (the previous default) tests the CURRENT in-memory
+    # weights -- i.e. whatever epoch EarlyStopping happened to stop at,
+    # not the best val_loss checkpoint ModelCheckpoint actually selected
+    # and saved. Found Aug 20 2026 (known_issues.md #46) after val_loss
+    # curves looked "terrible" in wandb: GaussianNLLLoss's variance term
+    # can spike val_loss 10-50x above its own best epoch late in training,
+    # and every test_mae/test_corr/test_loss number reported so far was
+    # silently computed from whichever point training stopped at, not the
+    # model that was actually selected as best. fast_dev_run disables
+    # checkpoint saving entirely, so "best" isn't available there --
+    # falls back to current weights only in that case (dry runs don't
+    # need a real checkpoint to sanity-check the code path).
+    ckpt_path = "best" if not args.fast_dev_run else None
+    trainer.test(lightning_module, datamodule=datamodule, ckpt_path=ckpt_path)
 
 
 if __name__ == "__main__":

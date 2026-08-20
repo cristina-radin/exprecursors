@@ -14,8 +14,8 @@
 # loads it via src.utils.hobday.load_ns_p90() when focal_weight: true.
 #
 # Usage:
-#   export SBATCH_ACCOUNT=mmm_gpu SBATCH_MAIL_USER=you@example.com
-#   sbatch --export=ALL scripts/slurm/submit_gnll_focal_shorttest.sh
+#   export SBATCH_ACCOUNT=mmm_gpu   # --mail-user must be passed on the sbatch CLI, NOT via env var (SLURM does not expand ${VAR} in #SBATCH lines, and SBATCH_MAIL_USER is not a real sbatch env override -- only SBATCH_ACCOUNT is)
+#   sbatch --mail-user=you@example.com --export=ALL scripts/slurm/submit_gnll_focal_shorttest.sh
 
 #SBATCH --partition=gpu1
 #SBATCH --nodes=1

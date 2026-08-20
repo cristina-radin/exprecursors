@@ -15,7 +15,13 @@ Any SLURM job longer than 1 hour must save one `.npz` per fold immediately
 after that fold finishes. Never accumulate results and save at the end.
 
 **SLURM email**
-Set `SLURM_MAIL` env var before submitting. Never hardcode an email in submit scripts.
+`#SBATCH` directive lines are read literally by sbatch, NOT through the shell —
+`${VAR}` inside a `#SBATCH` line is never expanded (confirmed empirically,
+see known_issues.md). Never write `#SBATCH --mail-user=${SOME_VAR}` — it
+silently submits the literal unexpanded string as the address and no mail
+is ever sent. Always pass `--mail-user=you@example.com` (and `--account=...`)
+directly on the `sbatch` command line instead. Never hardcode an email inside
+a submit script's `#SBATCH` block.
 
 ## Code discipline
 - No silent fallbacks: if a value can't be parsed/found, raise an error with a

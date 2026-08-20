@@ -1,4 +1,7 @@
 #!/bin/bash
+# --mail-user must be passed on the sbatch CLI (not via env var/#SBATCH —
+# SLURM does not expand ${VAR} in #SBATCH lines):
+#   sbatch --account=your_account --mail-user=you@example.com scripts/slurm/submit_permutation_importance.sh
 #SBATCH --partition=booster
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

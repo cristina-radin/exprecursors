@@ -1,14 +1,15 @@
 #!/bin/bash
 # Submit partition training (remote_only or local_only), all 5 folds.
 #
+# #SBATCH directives are read literally by sbatch, not through the shell —
+# ${VAR} does NOT get expanded there. --account and --mail-user must be
+# passed on the sbatch CLI instead.
+#
 # Usage:
-#   export SLURM_ACCOUNT=your_account
-#   export SLURM_MAIL=your@email.com
 #   source .env          # sets MHW_DATA_FILE, MHW_EXPERIMENTS_DIR, etc.
-#   sbatch --export=ALL,MODE=remote_only scripts/slurm/submit_train.sh
-#   sbatch --export=ALL,MODE=local_only  scripts/slurm/submit_train.sh
+#   sbatch --account=your_account --mail-user=you@example.com --export=ALL,MODE=remote_only scripts/slurm/submit_train.sh
+#   sbatch --account=your_account --mail-user=you@example.com --export=ALL,MODE=local_only  scripts/slurm/submit_train.sh
 
-#SBATCH --account=${SLURM_ACCOUNT:-your_account}
 #SBATCH --partition=booster
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -20,7 +21,6 @@
 #SBATCH --output=slurm-partition-%x-%A_%a.out
 #SBATCH --error=slurm-partition-%x-%A_%a.err
 #SBATCH --mail-type=FAIL
-#SBATCH --mail-user=${SLURM_MAIL:-}
 
 module --force purge
 module load Stages/2025

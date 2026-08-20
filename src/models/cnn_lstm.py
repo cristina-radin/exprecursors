@@ -8,6 +8,7 @@ Architecture:
   4. FC head:       [attended_features + temporal_features] → scalar prediction
 """
 
+import math
 from typing import Any, Dict
 
 import pytorch_lightning as pl
@@ -63,7 +64,9 @@ class CNNEncoder(nn.Module):
         Pool2d = nn.MaxPool2d if pooling == "max" else nn.AvgPool2d
 
         self.cnn = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1, padding_mode=padding_mode),
+            nn.Conv2d(
+                in_channels, 32, kernel_size=3, padding=1, padding_mode=padding_mode
+            ),
             nn.BatchNorm2d(32),
             nn.ReLU(),
             Pool2d(2),  # 141×201 → 70×100
@@ -162,7 +165,10 @@ class CNNLSTMModel(nn.Module):
         self.padding_mode = padding_mode
         self.quantile_head_enabled = quantile_head
         self.cnn_encoder = CNNEncoder(
-            in_channels, out_features=cnn_features, pooling=pooling, padding_mode=padding_mode
+            in_channels,
+            out_features=cnn_features,
+            pooling=pooling,
+            padding_mode=padding_mode,
         )
 
         if arch == "attention_only":
@@ -357,6 +363,9 @@ class CNNLightningModule(pl.LightningModule):
         focal_weight: bool = False,
         focal_alpha: float = 1.0,
         p90_by_doy: torch.Tensor = None,
+        lr_scheduler: str = "reduce_on_plateau",
+        warmup_epochs: int = 5,
+        cosine_t_max_epochs: int = None,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model", "p90_by_doy"])
@@ -371,6 +380,13 @@ class CNNLightningModule(pl.LightningModule):
         self.quantile_weight = quantile_weight
         self.focal_weight = focal_weight
         self.focal_alpha = focal_alpha
+        if lr_scheduler not in ("reduce_on_plateau", "cosine"):
+            raise ValueError(
+                f"lr_scheduler must be 'reduce_on_plateau' or 'cosine', got {lr_scheduler!r}"
+            )
+        self.lr_scheduler_type = lr_scheduler
+        self.warmup_epochs = warmup_epochs
+        self.cosine_t_max_epochs = cosine_t_max_epochs
 
         if quantile_head and not gaussian_nll:
             raise ValueError(
@@ -502,9 +518,13 @@ class CNNLightningModule(pl.LightningModule):
             loss, pred, plain_nll, frac_extreme = self._focal_weighted_loss(
                 y_hat, y, target_doy
             )
-            self.log(f"{split}_nll_loss_unweighted", plain_nll, on_step=False, on_epoch=True)
+            self.log(
+                f"{split}_nll_loss_unweighted", plain_nll, on_step=False, on_epoch=True
+            )
             self.log(f"{split}_nll_loss_weighted", loss, on_step=False, on_epoch=True)
-            self.log(f"{split}_frac_extreme", frac_extreme, on_step=False, on_epoch=True)
+            self.log(
+                f"{split}_frac_extreme", frac_extreme, on_step=False, on_epoch=True
+            )
             return loss, pred, y
 
         x_spatial, x_temporal, y = batch
@@ -595,6 +615,42 @@ class CNNLightningModule(pl.LightningModule):
         optimizer = torch.optim.Adam(
             self.parameters(), lr=self.learning_rate, weight_decay=1e-4
         )
+        if self.lr_scheduler_type == "cosine":
+            # Linear warmup for warmup_epochs, then cosine decay to 0 over
+            # the remaining epochs. T_max is cosine_t_max_epochs if given
+            # (the REALISTIC expected training length, e.g. from prior
+            # early-stopping history — not `max_epochs`, which is usually
+            # an artificial early-stopping ceiling; annealing against the
+            # literal `max_epochs` barely decays at all if the run stops
+            # far earlier, silently defeating the point of using cosine).
+            # Falls back to the attached Trainer's max_epochs only if
+            # cosine_t_max_epochs isn't set. No silent numeric fallback if
+            # neither is available -- config bug, must be visible, not
+            # guessed at (CLAUDE.md "no silent fallbacks").
+            if self.cosine_t_max_epochs is not None:
+                max_epochs = self.cosine_t_max_epochs
+            elif self.trainer is not None:
+                max_epochs = self.trainer.max_epochs
+            else:
+                raise RuntimeError(
+                    "lr_scheduler='cosine' needs either cosine_t_max_epochs set "
+                    "explicitly or an attached Trainer with max_epochs -- got neither."
+                )
+            warmup = self.warmup_epochs
+
+            def lr_lambda(epoch: int) -> float:
+                if epoch < warmup:
+                    return (epoch + 1) / warmup
+                progress = (epoch - warmup) / max(1, max_epochs - warmup)
+                return 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
+
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer, lr_lambda=lr_lambda
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
+            }
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="min", factor=0.5, patience=5
         )

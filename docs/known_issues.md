@@ -623,7 +623,331 @@ evidence — do not assume.
     to report focal-weighted loss values on held-out data. Flagged by the
     user, not fixed.
 
+40. **`mean_clim.nc`'s `mean_clim` never receives the 31-day smooth Hobday
+    et al. 2016 prescribes for the climatological mean — verified against
+    the source, fixed as opt-in Aug 20 2026**: `to_anom`/`target` (the
+    model's actual regression target, `docs/data.md`) are computed as
+    `SST - mean_clim`, where `mean_clim` is the raw CDO `ydrunmean,11`
+    output (±5-day window climatological mean), reference period
+    1985-2014. Hobday et al. 2016 ("A hierarchical approach to defining
+    marine heatwaves", Progress in Oceanography 141, 227-238) prescribes
+    smoothing BOTH the climatological mean and the p90 threshold curve
+    with an additional 31-day moving average after the windowed
+    calculation — confirmed against the paper directly, not from memory.
+    `p90_thresh` already gets this smooth (at runtime, via
+    `load_ns_p90()`, known_issues #7) but `mean_clim` never has, since
+    this repo existed — a real, previously-undocumented deviation from
+    the canonical methodology, affecting `target` project-wide (not just
+    MHW classification).
+    **Quantified** (NS-box mean, computed directly on
+    `sst_climatology_doy.nc`, no raw-source regeneration needed): delta
+    between unsmoothed and 31-day-smoothed `mean_clim` — RMS **0.046°C**
+    (6.3% of target's std, 0.7347°C), max **0.131°C** (18%). Real but
+    modest — smaller than current models' MAE (~0.25-0.30°C), and affects
+    `full_gnll_quantile`/`full_gnll_focal`/any future variant equally (not
+    a differential effect between models already compared).
+    **Fix (opt-in, no raw-source regeneration required)**:
+    `src/utils/hobday.py::load_ns_mean_clim_smooth_delta()` (sister
+    function to `load_ns_p90()`) returns `delta[doy] = mean_clim_unsmoothed
+    - mean_clim_smoothed` (365,), derived on the fly from `mean_clim`
+    already present in `sst_climatology_doy.nc`. New config flag
+    `hobday_smooth_target` (default `False`) in
+    `LazyDataset.__init__` applies `target += delta[doy]` before
+    `compute_stats()` runs, so the corrected target's normalisation stats
+    are self-consistent. `src.utils.hobday` is imported lazily inside
+    `__init__` only when the flag is set — importing it at module level
+    would make `dataset.py` (imported by nearly every script) require
+    `MHW_CLIM_FILE` even for configs that don't use this flag
+    (`src.utils.paths.CLIM_FILE` raises at import time if unset).
+    **Not activated in any existing config** — no experiment's target
+    changes without explicitly opting in.
+    **Deliberately not fixed at the source**: regenerating
+    `mean_clim.nc`/`to_anom` with the proper 31-day-smoothed mean from raw
+    sources (`preprocess_all.py`, outside this repo) would have a larger
+    blast radius than the kfold split fix (issue #30-class) — affects the
+    target of every experiment in the project, not just kfold-mode ones.
+    Parked as an explicit pending decision, same class as the
+    `land_mask`/`land_mask_v2` situation in `docs/data.md`.
+
+41. **Ground-truth "MHW day" definition — basin-mean-then-threshold is not
+    the field-standard definition; quantified and a corrected alternative
+    prototyped, Aug 20 2026, not yet adopted anywhere**: `target` is the
+    NS-box spatial mean of `to_anom`, and the project's existing MHW-day
+    classification (e.g. the "15.2%"/"19.0%"/"34.9%" extreme-day recall
+    numbers from Aug 19-20 2026) applies Hobday to that single averaged
+    series. Confirmed against the literature that this is **not** the
+    standard approach: Hobday et al. 2016 defines an MHW "at a single
+    location" (point-based), and standard regional aggregation is
+    "bin-averaged... regional aggregation of point-based definitions" —
+    i.e. classify per-pixel first, aggregate second, not the reverse.
+    Basin-mean-first systematically smooths out real extremes: measured
+    directly, our 2022 count (66 days) is far below the ~140-day regional
+    average reported in Ocean Science 2025 for the North Sea (range 60
+    Norwegian Trench to 200+ English Channel by sub-region) — our number
+    sits near that range's low end, consistent with the smoothing
+    explanation, not a data bug (verified: the year-level ranking of
+    which years were extreme matches literature well, 9/10 confirmed —
+    see the Aug 20 2026 narrative.md entry for the full literature
+    cross-check).
+    **Prototyped fix, not yet the project's standard**: per-pixel Hobday
+    classification (`merged_daily.nc`'s `to_anom` at 0.5°, 457 ocean
+    pixels in the NS box + `sst_climatology_doy.nc`'s `p90_thresh`
+    regridded to match) + an area-fraction threshold for "regional MHW
+    day", using only data already present on Raven — no new transfers.
+    Exploratory run at 50% area (not calibrated, no literature basis for
+    that specific number — confirmed no universal convention exists; the
+    field either reports "daily MHW area" as a continuous quantity or
+    calibrates a cutoff against the region's own historical distribution,
+    e.g. "Blob-Class" events use area >400,000 km² because that is the
+    top 20% of that region's own historical record, not a fixed
+    percentage): 2022→74 days, 2014→115, 2007→105 — closer to literature
+    than the current 66/134/110. "Any pixel" (near-0% threshold) gives
+    365/365 days — useless, confirms a real threshold is required, not
+    just switching to per-pixel.
+    **Not resolved — this is a paper-framing decision, not a pure
+    technical one**: if the paper's claim is "we forecast a North-Sea
+    basin-mean anomaly index", the current definition is self-consistent
+    and nothing needs to change. If the claim is closer to "the model
+    detects/predicts marine heatwaves" (which the project's own name
+    suggests), "MHW" should use the field-standard per-pixel definition,
+    and the model's scalar prediction becomes a proxy/early-warning signal
+    for that independently-defined event — which requires reporting how
+    well the proxy and the real event agree, not assuming they're
+    interchangeable. See the calibration/agreement work tracked against
+    this issue before either number is cited as final in the paper.
+    **Threshold calibrated Aug 20 2026** (full reasoning in the Aug 20 2026
+    narrative.md entry): area-fraction cutoff set to **5% (MedECC 2023
+    default)**, not the earlier exploratory 50% nor the same-day 40.5%
+    (top10%/p90-of-own-distribution) choice — 5% reproduces the
+    independently-sourced ~140 days/yr North Sea literature benchmark
+    almost exactly (135.1 days/yr), while 40.5% landed in the NOAA
+    Blob-tracker "extreme events only" tier (36.5 days/yr), undercounting
+    like the original basin-mean definition it was meant to correct.
+    Darmaraki et al. (2024)'s North-Atlantic-specific 10-20% kept as
+    fallback if reviewers object to a Mediterranean-derived convention.
+    `scripts/analysis/mhw_definition_agreement_and_recall.py`'s
+    `AREA_FRAC_THRESHOLD = 0.05`.
+
+42. **`split_mode: kfold`'s `val_years` collision (see #1's own detailed
+    write-up above under "Hallazgo #1" during the Aug 20 2026 review) —
+    fixed via a new `stratified_kfold` mode, `kfold` left unfixed on
+    purpose, Aug 20 2026**: `src/data/datamodule.py` gained
+    `elif self.split_mode == "stratified_kfold":` — rotating buckets
+    (`val_years = buckets[(fold+1) % n_folds]`) built by round-robin
+    assignment of years ranked by Hobday MHW-day count (descending, reusing
+    `load_ns_p90()`/`apply_hobday()`, not reimplemented). Verified
+    empirically: test MHW-days per fold went from `[99, 110, 299, 218,
+    335]` (kfold) to `[264, 226, 212, 196, 163]` (stratified_kfold) — max/min
+    ratio 3.4x → 1.6x. `val_years` differs by construction across every
+    fold (unlike kfold's folds 1-4 sharing one set). `kfold` itself is
+    deliberately left unfixed — fixing it in place would silently change
+    every existing kfold-mode experiment's actual train/val/test
+    composition without anyone asking for that, invalidating
+    reproducibility of everything already cited in `narrative.md`.
+    **`tests/test_splits.py` rewritten**: previously replicated kfold with
+    the wrong RNG (`default_rng(0)` vs. production's `RandomState(seed)`)
+    and never modeled `val_years` at all — see #1's meta-hallazgo. Now: (a)
+    `_kfold_test_groups`/`_kfold_val_years` use the correct
+    `RandomState(seed=42)`, matching production exactly; (b)
+    `test_kfold_val_years_collision_KNOWN_BUG` turns the bug itself into an
+    explicit characterization-test assertion, so it can't silently regress
+    or silently get "fixed" without the test (and this doc) being updated
+    together; (c) new `stratified_kfold` tests (val differs per fold, no
+    overlap, full coverage, determinism) use a synthetic MHW-day ranking,
+    not real Hobday output — the bucket-rotation algorithm being tested
+    doesn't depend on where the ranking numbers came from, and this keeps
+    the test suite fast and independent of `MHW_DATA_FILE`/`MHW_CLIM_FILE`
+    being set. All 10 tests pass.
+    **Same RNG bug, found duplicated in 2 more places, 1 fixed here,
+    1 left as a known gap**: `scripts/persistence_remote_sst.py::get_test_years`
+    had the identical `default_rng(0)` bug — its own module docstring
+    claims to compute "the same kfold test splits as the masked
+    experiment", which was never true. Fixed alongside this issue (now
+    `RandomState(seed=42)`, matching production, `seed` parameterized
+    instead of hardcoded). `scripts/ig_simple.py:84` has the exact same bug
+    and was **not** fixed in this pass — it only affects which years'
+    samples get used for IG/XAI plots, not any training or eval-metric
+    result, and is lower priority than the training-pipeline-facing fixes.
+    Flagged here so it isn't forgotten before `ig_simple.py` is next used
+    against a `stratified_kfold`-trained checkpoint.
+
+43. **SLURM job-completion emails never actually sent — found Aug 20 2026,
+    verified empirically**: every `scripts/slurm/*.sh` submit script either
+    (a) had `#SBATCH --mail-type=...` with no `--mail-user` directive at
+    all, relying on a header comment instructing `export
+    SBATCH_MAIL_USER=you@example.com` before `sbatch --export=ALL ...`, or
+    (b) had `#SBATCH --mail-user=${SLURM_MAIL:-}` directly. Both are
+    broken: `#SBATCH` lines are parsed literally by `sbatch`, not through a
+    shell, so `${VAR}` is **never expanded** there. `SBATCH_MAIL_USER` is
+    also not a real sbatch-recognised env override — only `SBATCH_ACCOUNT`
+    (mapping to `--account`) is documented as such (`man sbatch`, INPUT
+    ENVIRONMENT VARIABLES). Verified by submitting real (held, then
+    cancelled before running) test jobs and inspecting `scontrol show job`:
+    case (a) produces a job with the *default* mail-user (submitting user,
+    which doesn't resolve to a working address on Raven); case (b)
+    produces a job with `MailUser=${SLURM_MAIL:-}` — the literal
+    unexpanded string. This means **no job submitted through this repo's
+    scripts has ever emailed a completion/failure notification**,
+    including every `full_gnll_quantile`/`full_gnll_focal` array job to
+    date. Fixed in all `scripts/slurm/*.sh`: header comments now instruct
+    passing `--mail-user=you@example.com` (and `--account=...`) directly on
+    the `sbatch` command line, and the inert `#SBATCH --mail-user=${...}`
+    lines were removed. `CLAUDE.md`'s SLURM-email rule updated to match.
+    Going forward: `sbatch --account=mmm_gpu
+    --mail-user=cristina.radin@uni-hamburg.de --export=ALL ...`.
+
+44. **Cosine LR scheduler's `T_max` used the artificial `max_epochs` ceiling
+    instead of the realistic early-stop horizon — found by multi-agent
+    code review Aug 20 2026, before the `full_gnll_focal_v2` fold0 GPU
+    launch, fixed same day**: `configure_optimizers()`'s cosine branch
+    computed decay progress against `self.trainer.max_epochs` (`1000` in
+    every partition config — an early-stopping ceiling, `EarlyStopping`
+    patience=30 always stops training long before that). Verified
+    directly (not just reasoned about): with `T_max=1000`, LR is still
+    ~90% of peak by the time a run of ~150-200 epochs would realistically
+    early-stop — the cosine schedule barely does anything, silently
+    defeating the reason it was added over `ReduceLROnPlateau`. Fixed by
+    adding an explicit `cosine_t_max_epochs` config key (`CNNLightningModule.
+    __init__`, `configure_optimizers()`, threaded through
+    `train_partition.py`), set to `60` in `configs/partition/
+    full_gnll_focal_v2/fold{0-4}.yaml` (`fold0_shorttest.yaml` uses `3`,
+    matching its own `max_epochs: 3`, plus `warmup_epochs: 1` instead of
+    `5` so the 3-epoch smoke test actually reaches the cosine-decay
+    branch instead of staying in warmup the whole time — also found by
+    the same review). No silent fallback if neither `cosine_t_max_epochs`
+    nor an attached `Trainer` is available — raises instead of guessing a
+    number. `60` is a judgment call, not a proven-optimal value — pick
+    based on the ~30-40 epoch early-stop range observed for the v1
+    `full_gnll_quantile`/`full_gnll_focal` runs (narrative.md, Aug 20
+    2026 compute-cost note), doubled for margin since v2 changes LR
+    (5e-5 vs 1e-4) and target scale (`hobday_smooth_target`). Revisit
+    once fold0's real epoch count is known.
+
+45. **`configs/partition/` naming has sprawled across a session of rapid
+    iteration (Aug 20 2026) — TODO cleanup next week, mapped here so the
+    cleanup has a clear starting inventory instead of having to
+    reverse-engineer it from git history.** As of Aug 20 2026 (updated
+    same day: `experiments/partition/`'s v1 output directories — all 12
+    of `TbotAtm_full_gnll_{focal,quantile}_seed42_fold{0-4,0_shorttest}`
+    — moved into `experiments/partition/old_v1/` at the user's request,
+    to stop confusing them with the new v2/v3 runs sitting at the top
+    level. Updated in lockstep: the 12 corresponding `configs/partition/
+    full_gnll_{focal,quantile}/fold*.yaml`'s `output_dir:`, plus
+    `scripts/analysis/{_adhoc_eval_extreme_recall,
+    mhw_definition_agreement_and_recall}.py`'s `EXPERIMENTS_DIR` constant
+    — verified checkpoints are still reachable at the new path before
+    calling this done. `configs/` themselves were NOT moved/renamed, only
+    their `output_dir:` values edited, so the "historical record, don't
+    rename configs" guidance from before still applies to the yaml files
+    — it's specifically the big `experiments/` checkpoint directories that
+    moved):
+    - `full/`, `full_gnll/` — original JUWELS-path configs (`data_dir`/
+      `output_dir` under `/p/project1/hai_1127/...`), plain MSE and plain
+      GNLL respectively. Real completed results already cited in
+      `narrative.md` (the "15.2%" GNLL baseline). **Do not delete or
+      rename** — historical record.
+    - `full_gnll_quantile/`, `full_gnll_focal/` — Raven-ported (Aug 19-20
+      2026), `split_mode: kfold` (the buggy one, #1/#2), no
+      `hobday_smooth_target`, `ReduceLROnPlateau`. Real completed 5-fold
+      results, jobs 29404086/29404257. **Do not delete or rename** —
+      historical record, and `full_gnll_quantile/fold0.yaml` is also
+      still the one used by `scripts/analysis/
+      mhw_definition_agreement_and_recall.py` to reload those exact
+      checkpoints (loading a checkpoint requires the config that matches
+      how it was trained, not a "cleaned up" one).
+    - `full_gnll_focal_v2/` — fold0 GPU-launched Aug 20 2026 (job
+      29417248), `stratified_kfold` + `hobday_smooth_target` + cosine
+      LR/warmup + `reflect` padding. Fold0-only so far; full 5-fold array
+      not yet launched (Paso 5 gate).
+    - `full_gnll_quantile_v2/` — fold0 GPU-launched Aug 20 2026 (job
+      29417405), same v2 treatment as focal_v2, added same day
+      specifically to compare against it at the fold0 level before
+      committing to any full array.
+    - `full_mse_v2/` — **pre-existing, unrelated to this session's "v2"
+      meaning**: an old JUWELS-path plain-MSE config (`merged_daily_v2.nc`
+      — the "v2" refers to a dataset version, not the stratified_kfold/
+      cosine/reflect treatment used everywhere else in this list). Never
+      run on Raven. Kept untouched to avoid destroying whatever it was
+      for, but the name collision with this session's "_v2 = new
+      treatment" convention is exactly the kind of thing to fix during
+      cleanup (rename to something like `full_mse_juwels_legacy/` or
+      delete if confirmed unused).
+    - `full_mse_v3/` — fold0 GPU-launched Aug 20 2026 (job 29417406), the
+      *actual* stratified_kfold/hobday_smooth_target/cosine/reflect
+      treatment, named "v3" only to dodge the collision above. Rename
+      candidate once `full_mse_v2` is resolved.
+    **Suggested cleanup direction (not decided, discuss together next
+    week)**: adopt one consistent suffix meaning "stratified_kfold +
+    hobday_smooth_target + reflect padding + cosine LR" across all three
+    loss variants (e.g. `full_{focal,quantile,mse}_stratified/` or similar
+    self-describing name instead of `_v2`/`_v3`), retire the old
+    `kfold`-mode configs' directories only after confirming nothing still
+    depends on reloading their checkpoints, and decide whether `full`/
+    `full_gnll` (JUWELS-path, unrunnable on Raven as-is) should be ported
+    or archived.
+
+46. **`trainer.test()` used last-epoch weights, not the best checkpoint —
+    found Aug 20 2026 while investigating why wandb val_loss curves looked
+    "terrible", fixed same day, not yet re-run.** `train_partition.py`
+    called `trainer.test(lightning_module, datamodule=datamodule)` with
+    no `ckpt_path` — confirmed against the installed `pytorch_lightning`
+    2.6.0 docstring: "If ckpt_path is None and the model instance was
+    passed, use the current weights" (NOT the best checkpoint, despite
+    `ModelCheckpoint(monitor="val_loss", mode="min", save_top_k=3)` being
+    configured and actively saving a better one). So every
+    `test_mae`/`test_corr`/`test_loss`/`test_nll_loss`/`test_pinball_loss`
+    number reported by any `train_partition.py` run to date — including
+    the fold0 `full_gnll_focal_v2`/`full_gnll_quantile_v2`/`full_mse_v3`
+    comparison and the already-cited v1 `full_gnll_quantile`/
+    `full_gnll_focal` 5-fold results — reflects whatever epoch
+    `EarlyStopping` happened to stop at, not the model that was actually
+    selected as best. Verified this matters, not just theoretically:
+    `full_gnll_focal_v2`'s real per-epoch `val_loss` trajectory (grepped
+    from the SLURM log, not assumed) hits a minimum of **0.034 around
+    epoch 18-19**, then oscillates up to **1.35-1.7 by epoch 32-35**
+    (where it stopped) — a ~50x swing, consistent with GaussianNLLLoss's
+    known variance-collapse pathology (predicted variance shrinks on some
+    validation batches, `log(var)` spikes). `full_mse_v3` (no variance
+    term) oscillates too but far less (~3x, 0.30-0.86) — some of the
+    swing is normal small-val-set noise, but the GNLL-specific portion is
+    real and much larger. **Not affected**: the extreme-day recall
+    numbers in `scripts/analysis/_adhoc_eval_extreme_recall.py` and
+    `mhw_definition_agreement_and_recall.py` — those separately call
+    `best_ckpt()` and `load_from_checkpoint()` explicitly, bypassing
+    `trainer.test()`'s default entirely. Fixed: `ckpt_path = "best" if
+    not args.fast_dev_run else None` (fast_dev_run disables checkpoint
+    saving, so "best" doesn't exist there). **Not yet re-run** — the user
+    wants to keep analyzing before relaunching anything (Aug 20 2026:
+    "OBVIAMENTE PON EL MEJOR CHECKPOINT. PERO NO LANCES AUN"). Every
+    MAE/r/loss number discussed before this fix should be treated as
+    unreliable until re-run with the corrected checkpoint selection.
+
+47. **XAI (`src/xai/integrated_gradients.py`, `grad_cam.py`) only explains
+    the mean head, never the quantile head — real gap, flagged before it's
+    needed, not yet fixed, Aug 21 2026.** Confirmed by reading both files:
+    `_integrated_gradients_forward()` calls `model(interp, x_temporal)`
+    (plain `forward()`, mean/log_var only) and backprops from that;
+    `grad_cam.py:67` does the same. Neither calls `forward_with_quantile()`.
+    This was already a known gap noted in-code (`cnn_lstm.py`'s
+    `forward_with_attention()` docstring: "quantile_head + attention + XAI
+    is unimplemented"). Matters now because `full_gnll_quantile_v2` is the
+    committed model (Aug 20-21 2026, see narrative.md) and its actual value
+    is in `q_pred` (44.7%/91.8% recall/precision under def2), not the mean
+    (5.3% recall) — running IG/GradCAM as-is would explain "why does the
+    model predict this temperature", not "why does the model flag this day
+    as high MHW risk", which is the more interesting question for a
+    precursor-detection paper. Fix is scoped, not a rewrite: since
+    `_encode()` is already shared between both heads, adapt
+    `_integrated_gradients_forward()` (and GradCAM's analogous function) to
+    optionally call `forward_with_quantile()` and backprop from `q_pred`
+    instead of `pred`. Also unverified: whether `pred.squeeze().backward()`
+    in `_integrated_gradients_forward()` even works for `gaussian_nll=True`
+    models today (`pred` would be shape `(batch,2)` — `.backward()` on a
+    non-scalar tensor without a `gradient` arg normally errors) — check
+    this before assuming the mean-head path itself is even currently
+    exercised correctly for GNLL models, separately from the quantile gap.
+
 ## How to use
-For each script or memory doc reviewed, check against all 29 items and
+For each script or memory doc reviewed, check against all 47 items and
 report: applies / does not apply / unclear — with the specific line as
 evidence for each "applies".

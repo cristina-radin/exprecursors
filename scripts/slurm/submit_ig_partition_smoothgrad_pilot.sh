@@ -23,8 +23,8 @@
 #
 # Usage:
 #   source .env
-#   export SBATCH_ACCOUNT=your_account SBATCH_MAIL_USER=you@example.com
-#   sbatch --export=ALL,PARTITION=full,MODEL_TAG=mse_v2,FOLD=0,MAX_BATCHES=1 \
+#   export SBATCH_ACCOUNT=your_account   # --mail-user must be passed on the sbatch CLI (see comment above)
+#   sbatch --mail-user=you@example.com --export=ALL,PARTITION=full,MODEL_TAG=mse_v2,FOLD=0,MAX_BATCHES=1 \
 #       scripts/slurm/submit_ig_partition_smoothgrad_pilot.sh
 #
 # MAX_BATCHES (default 1) stops the run early for timing purposes — with the

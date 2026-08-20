@@ -1,15 +1,16 @@
 #!/bin/bash
 # Submit onset skill evaluation for one partition mode.
 #
+# #SBATCH directives are read literally by sbatch, not through the shell —
+# ${VAR} does NOT get expanded there. --account and --mail-user must be
+# passed on the sbatch CLI instead.
+#
 # Usage:
-#   export SLURM_ACCOUNT=your_account
-#   export SLURM_MAIL=your@email.com
 #   source .env
-#   sbatch --export=ALL,MODE=remote_only scripts/slurm/submit_eval.sh
-#   sbatch --export=ALL,MODE=local_only  scripts/slurm/submit_eval.sh
-#   sbatch --export=ALL,MODE=full        scripts/slurm/submit_eval.sh
+#   sbatch --account=your_account --mail-user=you@example.com --export=ALL,MODE=remote_only scripts/slurm/submit_eval.sh
+#   sbatch --account=your_account --mail-user=you@example.com --export=ALL,MODE=local_only  scripts/slurm/submit_eval.sh
+#   sbatch --account=your_account --mail-user=you@example.com --export=ALL,MODE=full        scripts/slurm/submit_eval.sh
 
-#SBATCH --account=${SLURM_ACCOUNT:-your_account}
 #SBATCH --partition=booster
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -20,7 +21,6 @@
 #SBATCH --output=slurm-onset_skill-%x-%j.out
 #SBATCH --error=slurm-onset_skill-%x-%j.err
 #SBATCH --mail-type=FAIL
-#SBATCH --mail-user=${SLURM_MAIL:-}
 
 module --force purge
 module load Stages/2025

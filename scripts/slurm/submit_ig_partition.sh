@@ -9,8 +9,8 @@
 #
 # Usage:
 #   source .env
-#   export SBATCH_ACCOUNT=your_account SBATCH_MAIL_USER=you@example.com
-#   sbatch --export=ALL scripts/slurm/submit_ig_partition.sh
+#   export SBATCH_ACCOUNT=your_account   # --mail-user must be passed on the sbatch CLI (see comment above)
+#   sbatch --mail-user=you@example.com --export=ALL scripts/slurm/submit_ig_partition.sh
 # (or: sbatch --account=... --mail-user=... --export=ALL ...)
 #
 # To explain a tagged model variant (e.g. TbotAtm_full_mse_v2_seed42_fold{N})

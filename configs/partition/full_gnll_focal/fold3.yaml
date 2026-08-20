@@ -24,7 +24,7 @@ train_ratio: 0.75
 val_ratio: 0.15
 test_ratio: 0.1
 seed: 42
-output_dir: /raven/u/cradin/exprecursors/experiments/partition/TbotAtm_full_gnll_focal_seed42_fold3
+output_dir: /raven/u/cradin/exprecursors/experiments/partition/old_v1/TbotAtm_full_gnll_focal_seed42_fold3
 normalize: true
 clim_ref_start: 1985
 clim_ref_end: 2014
