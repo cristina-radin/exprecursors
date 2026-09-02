@@ -23,6 +23,23 @@ is ever sent. Always pass `--mail-user=you@example.com` (and `--account=...`)
 directly on the `sbatch` command line instead. Never hardcode an email inside
 a submit script's `#SBATCH` block.
 
+**Git remotes — source of truth is Helmholtz Codebase (GitLab), NOT GitHub**
+- `origin` → `https://codebase.helmholtz.cloud/hereon-ksn/exprecursors.git`
+  (fetch + push). `git push` goes here.
+- `github` → `https://github.com/cristina-radin/exprecursors` — read-only mirror.
+  A **push mirror configured on the Codebase project** (Settings → Repository →
+  Mirroring) auto-pushes every branch to GitHub within a few minutes.
+- **Never `git push github` / push directly to GitHub** — it diverges from the
+  mirror and makes the mirror job fail. Push only to `origin` (Codebase).
+- HTTPS auth: `credential.helper store` is set; tokens for both hosts live in
+  `~/.git-credentials`. Codebase needs a GitLab PAT with `write_repository`.
+- Active work branch is `develop`. Other branches: `main`, `EGU26`,
+  `regression`, `binary_classification`, `binary-paul`.
+- Raven login nodes (`raven01`…) hit a per-user fork limit under load —
+  `fork: Resource temporarily unavailable`. Retry, switch login node, or
+  `git commit --no-verify` if pre-commit can't fork (only when lint is
+  already known clean).
+
 ## Code discipline
 - No silent fallbacks: if a value can't be parsed/found, raise an error with a
   clear message — never default to 0.0, None, or "skip" without printing a warning.
