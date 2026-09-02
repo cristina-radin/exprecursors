@@ -22,7 +22,29 @@ import torch.nn.functional as F
 
 
 class AttentionGradCAM:
-    def __init__(self, lightning_module):
+    def __init__(self, lightning_module, head: str = "mean"):
+        """
+        Args:
+            head: which scalar output to backprop from. Bug found Aug 22
+                2026 (same class as known_issues.md #49/#51's IG bug):
+                `compute()` used to call `self.model(xs, xt)` directly and
+                `.backward()` the result -- for `gaussian_nll=True` models
+                that returns (batch, 2) = [mean, log_var], so `.squeeze()`
+                does NOT give a scalar and backward() either errors or
+                (worse) implicitly mixes mean+log_var gradients. Must pick
+                ONE column, never average heads. "mean" -> forward()'s
+                column 0. "quantile" -> forward_with_quantile()'s q_pred
+                (requires quantile_head=True). "mean_mse" (legacy) -> plain
+                forward() as a scalar, only valid for non-gaussian_nll
+                (MSE-only) models -- kept for backward compat with existing
+                callers of this class that predate gaussian_nll models.
+        """
+        assert head in (
+            "mean",
+            "quantile",
+            "mean_mse",
+        ), f"head must be 'mean', 'quantile', or 'mean_mse', got {head!r}"
+        self.head = head
         self.lm = lightning_module
         self.model = lightning_module.model
         self._acts = None
@@ -64,13 +86,26 @@ class AttentionGradCAM:
         torch.backends.cudnn.enabled = False
         self.model.zero_grad()
         if self.is_lstm_only:
-            pred = self.model(x_spatial.float(), x_temporal.float())
+            if self.head == "quantile":
+                _, scalar_out = self.model.forward_with_quantile(
+                    x_spatial.float(), x_temporal.float()
+                )
+            elif self.head == "mean" and self.model.gaussian_nll:
+                y_hat = self.model(x_spatial.float(), x_temporal.float())
+                scalar_out = y_hat[
+                    :, 0:1
+                ]  # column 0 only -- never average with log_var
+            else:  # "mean_mse", or "mean" on a non-gaussian_nll model
+                scalar_out = self.model(x_spatial.float(), x_temporal.float())
             attn = None
         else:
             pred, attn = self.model.forward_with_attention(
                 x_spatial.float(), x_temporal.float()
             )
-        pred.squeeze().backward()
+            scalar_out = (
+                pred  # attention path predates gaussian_nll/quantile_head support
+            )
+        scalar_out.squeeze().backward()
         torch.backends.cudnn.enabled = prev
 
         window = x_spatial.shape[1]

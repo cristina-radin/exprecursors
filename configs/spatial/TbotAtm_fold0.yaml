@@ -1,4 +1,4 @@
-data_dir: /p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc
+data_dir: /raven/u/cradin/data/merged_daily.nc
 window_size: 60
 lead_time: 7
 clim_ref_start: 1985
@@ -25,4 +25,4 @@ ocean_variables:
 in_channels: 5
 seed: 42
 fold: 0
-output_dir: /p/project1/hai_1127/radin1/exprecursors/experiments/spatial/runs/TbotAtm_seed42_fold0  # pragma: allowlist secret
+output_dir: /raven/u/cradin/exprecursors/experiments/spatial/runs/TbotAtm_seed42_fold0

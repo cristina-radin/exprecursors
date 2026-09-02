@@ -46,7 +46,14 @@ def build_splits(ds: SpatialDataset, config: dict):
     test_years = set(fold_groups[fold].tolist())
 
     remaining = np.concatenate([fold_groups[i] for i in range(n_folds) if i != fold])
-    rng = np.random.default_rng(seed)
+    # Aug 24 2026 (spatial data/split audit, F3): was rng(seed) alone --
+    # `remaining` shares n_folds-2 of its n_folds-1 year-blocks between any
+    # two folds, so reshuffling it with the SAME seed across folds produced
+    # near-identical val_years sets (measured 83-100% pairwise overlap on
+    # real 1985-2024 data) -- undermining independence between folds'
+    # early-stopping/checkpoint-selection. Same bug class as known_issues
+    # #1/#42's kfold val_years collision. seed+fold breaks the alignment.
+    rng = np.random.default_rng(seed + fold)
     rng.shuffle(remaining)
     n_val = max(1, round(n_years * val_ratio))
     val_years = set(remaining[:n_val].tolist())
@@ -64,6 +71,12 @@ def build_splits(ds: SpatialDataset, config: dict):
     print(
         f"  Samples — train:{len(train_idx)}  val:{len(val_idx)}  test:{len(test_idx)}"
     )
+    # Mandatory output (plan rule: "sacar las configs reales resueltas como
+    # output", extended here per the spatial audit's F5 finding -- this
+    # script used to print only counts, never the actual years).
+    print(f"  train_years ({len(train_years)}): {sorted(train_years)}")
+    print(f"  val_years   ({len(val_years)}): {sorted(val_years)}")
+    print(f"  test_years  ({len(test_years)}): {sorted(test_years)}")
 
     return train_idx, val_idx, test_idx
 
@@ -81,6 +94,13 @@ def main():
 
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Mandatory output (plan rule, per spatial audit's F5 finding -- this
+    # script never dumped its resolved config, unlike train_partition.py).
+    print(f"\n=== Resolved config: {args.config} ===")
+    print(yaml.dump(config, sort_keys=False, default_flow_style=False))
+    with open(output_dir / "resolved_config.yaml", "w") as f:
+        yaml.dump(config, f, sort_keys=False, default_flow_style=False)
 
     # Dataset and splits
     ds = SpatialDataset(args.config)

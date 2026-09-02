@@ -1,0 +1,47 @@
+data_dir: /raven/u/cradin/data/merged_daily.nc
+variables:
+- ptho_bot
+- u10
+- v10
+- msl
+- ssr
+ocean_variables:
+- ptho_bot
+in_channels: 5
+arch: lstm_only
+pooling: avg
+padding_mode: reflect
+gaussian_nll: true
+quantile_head: true
+quantile_tau: 0.9
+quantile_weight: 0.3
+focal_weight: false
+hobday_smooth_target: true
+temporal_features: 0
+split_mode: stratified_kfold
+n_folds: 5
+fold: 1
+train_ratio: 0.75
+val_ratio: 0.15
+test_ratio: 0.1
+seed: 42
+output_dir: /raven/u/cradin/exprecursors/experiments/partition/TbotAtm_full_gnll_quantile_v2_landfill_seed42_fold1
+normalize: true
+clim_ref_start: 1985
+clim_ref_end: 2014
+clim_window: 5
+loss_fn: GaussianNLLLoss
+num_workers: 4
+cnn_features: 256
+lstm_hidden: 512
+lstm_layers: 2
+dropout: 0.2
+learning_rate: 0.00005
+lr_scheduler: cosine
+warmup_epochs: 5
+cosine_t_max_epochs: 60  # same v2 treatment as full_gnll_focal_v2 -- see known_issues.md and narrative.md Aug 20 2026
+batch_size: 16
+max_epochs: 1000
+window_size: 60
+lead_time: 7
+land_fill_mode: nearest

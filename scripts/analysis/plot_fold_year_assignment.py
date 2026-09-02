@@ -153,7 +153,7 @@ def main():
     axes[2].legend()
 
     plt.tight_layout()
-    out_dir = REPO_ROOT / "experiments" / "figures"
+    out_dir = REPO_ROOT / "experiments" / "figures" / "step3_stratified_kfold"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "fold_year_assignment_comparison.png"
     plt.savefig(out_path, dpi=150, bbox_inches="tight")

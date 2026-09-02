@@ -26,6 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from scipy.ndimage import uniform_filter1d
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -35,6 +36,7 @@ from src.utils.paths import CLIM_FILE, DATA_FILE  # noqa: E402
 
 NS_LAT_SLICE = slice(51.0, 62.5)
 NS_LON_SLICE = slice(-5.2, 13.2)
+SMOOTH_DAYS = 31
 
 
 def main():
@@ -47,8 +49,40 @@ def main():
     n_ocean = int(ocean_mask.sum())
     print(f"NS box ocean pixels: {n_ocean}")
 
-    p90_native = clim.p90_thresh
-    p90_regrid = p90_native.interp(
+    # Bug found Aug 21 2026 (user's methodological review): this script
+    # originally used clim.p90_thresh / ds.to_anom RAW, i.e. WITHOUT the
+    # 31-day Hobday et al. 2016 smooth -- but the v2 models train with
+    # hobday_smooth_target=True, whose target/prediction space and
+    # load_ns_p90() threshold ARE smoothed (see src/utils/hobday.py).
+    # quantile_head_recall_v2_all5.py's def2 (area_frac-based) then mixed
+    # this unsmoothed area_frac with the smoothed thresh1 for def1/recall
+    # in the same table -- two different reference climatologies. Fixed
+    # here by smoothing BOTH p90_thresh and mean_clim per-pixel along the
+    # doy axis (uniform_filter1d, same convention as load_ns_p90 /
+    # load_ns_mean_clim_smooth_delta, just applied per grid cell instead
+    # of pre-averaged over the NS box, since this script needs a spatial
+    # field, not a box-mean scalar).
+    p90_native = uniform_filter1d(
+        clim.p90_thresh.values, size=SMOOTH_DAYS, axis=0, mode="wrap"
+    )
+    mean_clim_raw = clim.mean_clim.values
+    mean_clim_smooth = uniform_filter1d(
+        mean_clim_raw, size=SMOOTH_DAYS, axis=0, mode="wrap"
+    )
+    mean_clim_delta = (
+        mean_clim_raw - mean_clim_smooth
+    )  # to_anom correction, per pixel/doy
+
+    p90_native_da = xr.DataArray(
+        p90_native, dims=clim.p90_thresh.dims, coords=clim.p90_thresh.coords
+    )
+    delta_da = xr.DataArray(
+        mean_clim_delta, dims=clim.mean_clim.dims, coords=clim.mean_clim.coords
+    )
+    p90_regrid = p90_native_da.interp(
+        lat=ns_to_anom.lat, lon=ns_to_anom.lon, method="linear"
+    )
+    delta_regrid = delta_da.interp(
         lat=ns_to_anom.lat, lon=ns_to_anom.lon, method="linear"
     )
 
@@ -57,7 +91,10 @@ def main():
     doys_clamped = doys.copy()
     doys_clamped[doys_clamped >= 365] = 365
 
-    to_anom_vals = ns_to_anom.values
+    # to_anom_smoothed = to_anom_unsmoothed + (mean_clim_unsmoothed -
+    # mean_clim_smoothed), same identity load_ns_mean_clim_smooth_delta's
+    # docstring derives, applied per-pixel here.
+    to_anom_vals = ns_to_anom.values + delta_regrid.values[doys_clamped - 1]
     p90_vals = p90_regrid.values
     thresh_per_time = p90_vals[doys_clamped - 1]
     exceed = to_anom_vals > thresh_per_time
@@ -111,7 +148,11 @@ def main():
     ax.legend()
     plt.tight_layout()
     out_path = (
-        REPO_ROOT / "experiments" / "figures" / "mhw_area_threshold_calibration.png"
+        REPO_ROOT
+        / "experiments"
+        / "figures"
+        / "step2_mhw_definition"
+        / "mhw_area_threshold_calibration.png"
     )
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"\nSaved {out_path}")

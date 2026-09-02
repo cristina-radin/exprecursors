@@ -163,6 +163,7 @@ def main():
         pooling=config.get("pooling", "max"),
         padding_mode=config.get("padding_mode", "zeros"),
         quantile_head=config.get("quantile_head", False),
+        state_feature=config.get("use_state_feature", False),
     )
     model = CNNLSTMModel(**model_kwargs)
     # Ground truth for eval/XAI scripts (load_model_config) — the exact
@@ -198,6 +199,7 @@ def main():
         lr_scheduler=config.get("lr_scheduler", "reduce_on_plateau"),
         warmup_epochs=config.get("warmup_epochs", 5),
         cosine_t_max_epochs=config.get("cosine_t_max_epochs"),
+        use_state_feature=config.get("use_state_feature", False),
     )
 
     callbacks = [

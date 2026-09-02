@@ -1,3 +1,14 @@
+# DEPRECATED v1 config, moved here Aug 21 2026 (user's methodological
+# review caught this) -- split_mode: kfold (the buggy one, #1/#2),
+# MSELoss, no quantile_head, lr=1e-4. Do NOT run. The current local-only
+# experiment lives at configs/partition/local/fold{0-4}.yaml
+# (stratified_kfold, hobday_smooth_target, gaussian_nll+quantile_head).
+# Kept (not deleted) as a historical record per this repo's convention
+# (known_issues.md #45), moved out of configs/partition/ specifically
+# because its old top-level filename collided with and could be
+# mistaken for the current local/ directory.
+#
+# Original header, for reference:
 # Local-only partition config — fold and seed passed as CLI args
 # Usage: python scripts/train_partition.py --config configs/partition/local.yaml --mode local_only --fold 0
 

@@ -671,6 +671,66 @@ Priority fix order before any spatial onset maps are cited:
 
 ---
 
+## Fase 4-bis follow-up — Raven migration + re-audit (Aug 24 2026)
+
+Before this session's first-ever Raven launch of the spatial pipeline,
+user asked for a fresh, thorough re-audit ("coger otro agente nuevo y
+volver a revisar todo") — 3 parallel background agents (data/split,
+model/eval, Raven-migration readiness), independent of the Aug 16-17
+pass above. Findings, resolved against the NF-S-* items above:
+
+- **NF-S-1** (silent fallback, `dataset_spatial.py` land_mask_tbottom):
+  confirmed still present, confirmed NOT triggered on real Raven data
+  (the fallback branch never executes — `land_mask_tbottom` is present
+  in `merged_daily.nc`). Deferred, LOW, unchanged.
+- **NF-S-2** (NaN guard): re-confirmed RESOLVED, no regression.
+- **NF-S-3** (fold-seed hardcode) — **upgraded from MEDIUM
+  documentation-gap to a real bug, and FIXED.** The Aug 16-17 pass
+  characterized this as "seed independent of config's own seed, document
+  it." The Aug 24 re-audit found something worse by simulating against
+  real 1985-2024 data: the *val*-year shuffle (a separate `rng(seed)`
+  call, not the `rng_fold(0)` one originally flagged) produces
+  83-100% pairwise val_years overlap between adjacent folds when `seed`
+  is held constant — exactly what naturally happens when `fold1.yaml` is
+  created by copying `fold0.yaml` (this project's own naming
+  convention). Fixed: `rng(seed + fold)`. See known_issues.md #62 for
+  full detail and post-fix verification.
+- **NF-S-4** (`build_splits` duplication): confirmed still present in
+  both `train_spatial.py`/`train_spatial_phys.py`. Not addressed this
+  session (phys variant not being launched) — still recommended for a
+  future Phase 5 `utils_spatial.py` extraction, now with one more
+  duplicate site added (`mhw_onset_skill.py::get_test_idx` and
+  `persistence_baseline_spatial.py::get_test_years` were found to
+  independently reimplement the same fold-year logic — currently in
+  agreement with `train_spatial.py`, verified by direct comparison of
+  hardcoded constants, but a latent divergence risk).
+- **NF-S-5** (HIGH, `mhw_onset_skill.py` MHW criterion): re-confirmed
+  present and unchanged (line numbers shifted slightly, 129-130). A full
+  fix is now designed (regrid `p90_thresh` onto the spatial grid, run
+  `apply_hobday()` per-pixel on the full contiguous record) and
+  benchmarked (~74s CPU, one-time) — see known_issues.md #64 — but
+  deliberately not implemented this session; still **NEEDS_FIX**, do not
+  cite any spatial onset map.
+- **NF-S-6/NF-S-7** (`model_spatial_phys.py`): re-confirmed isolated,
+  LOW, out of scope (phys variant not launched tonight).
+- **Two NEW findings**, not in the Aug 16-17 pass:
+  - **Raven-migration path fixes** (JUWELS-hardcoded `DATA_FILE`,
+    `output_dir`, missing `fold1.yaml`) — this pass's actual trigger;
+    see known_issues.md #61. All fixed and verified before launch.
+  - **`compute_stats()` per-variable masking mismatch** — new bug, same
+    family as #55 (a `__getitem__`/`compute_stats()` scope divergence).
+    Fixed; see known_issues.md #63.
+
+**Outcome**: 2 folds (fold0, fold1) of the plain TbotAtm model launched
+on Raven for the first time (job 29527143), after applying every fix
+above that was in scope for tonight's launch and smoke-testing both (F3,
+F4) directly against real data pre-launch. NF-S-4 and NF-S-5 remain
+open, tracked, and deliberately deferred — not silently dropped.
+
+**Status: Raven-migration sub-pass COMPLETE (Aug 24 2026) — 2 new bugs found and fixed, 1 bug reclassified (documentation-gap → real bug) and fixed, NF-S-4/NF-S-5 still open and tracked.**
+
+---
+
 ## Pending decision — land_mask grid-offset fix (Aug 18 2026, NOT applied yet)
 
 Full detail in `known_issues.md` #2. One-line status for quick reference:
@@ -704,6 +764,161 @@ pipelines that mask `to_anom` (or anything else) via the generic
 **If/when a rerun is ever decided**: use `merged_daily_v2.nc`, not
 `merged_daily.nc` — that's the whole point of having it ready. Until then,
 this is parked, not forgotten.
+
+---
+
+## Phase 6 — Aug 21-22 2026 (land_fill artifact investigation, full
+## re-training batch, XAI triangulation) — NEW, not previously tracked here
+
+This entire phase happened in a separate working session AFTER Phase 4's
+Aug 18 cutoff and was never logged in this plan until now (Aug 22 2026).
+Chronological audit discipline (oldest-first, CONFIRMED/NEEDS_RERUN/
+ARCHIVE labels) applied retroactively below so the supervision-meeting
+narrative has one place that covers everything, not just Phases 1-4.
+
+### Code — bugs found and fixed (chronological)
+
+- [x] `src/data/dataset.py` — **NEEDS_RERUN was correct, now CONFIRMED
+      post-fix** (known_issues.md #55)
+      `compute_stats()`'s land-pixel-exclusion branch was gated on
+      `land_fill_mode == "zero"` only — `"nearest"` silently computed
+      `ptho_bot` normalization mean/std over the full grid including
+      9473 copied-value land pixels, inflating std +23.4% and
+      attenuating every real ocean value ~19% in normalized space.
+      Fixed: land now excluded for both modes. Verified: post-fix stats
+      bit-identical to zero-mode (mean=0.0229, std=0.2775).
+
+- [x] `scripts/analysis/calibrate_mhw_area_threshold.py` — **NEEDS_RERUN
+      was correct, now CONFIRMED post-fix** (known_issues.md #56.1)
+      Computed `area_frac_timeseries.npy` from raw/unsmoothed
+      `to_anom`/`p90_thresh`, while `quantile_head_recall_v2_all5.py`'s
+      def1 uses the smoothed `load_ns_p90()` threshold in the same
+      table — mismatched climatology references. Fixed: both `p90_thresh`
+      and `mean_clim` now smoothed per-pixel before exceedance. 423/14600
+      days (2.9%) flipped sides of the 0.05 threshold on rerun.
+
+- [x] `scripts/eval_onset_skill_quantile_v2.py` — **NEEDS_RERUN was
+      correct, now CONFIRMED post-fix** (known_issues.md #56.2, #56.3
+      config trap also fixed same pass)
+      Never got the #53 per-year Hobday fix — ran `apply_hobday()` on
+      each fold's full concatenated test series, and its own comment
+      wrongly claimed chronological sort = calendar contiguity. Only
+      affects the Onset/Mid-event/No-MHW row split, NOT the pooled "All"
+      row. Fixed (per-year loop) + generalized with `--config_dir` so it
+      isn't duplicated per model family. A regression was introduced and
+      caught during this same fix (removing the old `LEAD = 7` constant
+      broke `persist[LEAD:]`, missed by a too-narrow grep) — fixed
+      properly by reading `LEAD` from the target config's own
+      `lead_time`.
+
+- [x] `configs/partition/local.yaml`, `remote.yaml` — **ARCHIVE**
+      (known_issues.md #56.3)
+      Leftover v1 configs (`split_mode: kfold`, MSELoss, no
+      quantile_head) whose filenames collided with the current v2
+      directories `local/`/`remote/` and whose own header invited
+      running them. Moved to `configs/partition/_deprecated_v1/` with
+      deprecation headers, not deleted (historical record convention,
+      #45). No checkpoints depended on them.
+
+- [x] `scripts/ig_partition_quantile.py`,
+      `scripts/occlusion_ptho_bot_sanity_check.py` — **NEEDS_RERUN was
+      correct, now CONFIRMED post-fix** (known_issues.md #57 P1)
+      Both used `test_indices[:max_samples]` — since `stratified_kfold`
+      builds `test_indices` in chronological order over non-consecutive
+      test years, this concentrated 299/300 "population" IG samples in
+      a single year (1985) for fold0. Every IG/occlusion map produced
+      before the fix represented one early year, not the 40-year
+      test-year span. Fixed via new shared `src/utils/sampling.py::
+      stratified_test_sample()` (draws proportionally by target year,
+      seeded) — avoids duplicating the fix per script (this project's
+      own documented anti-pattern).
+
+- [x] `src/xai/grad_cam.py` — **NEEDS_FIX was correct, now CONFIRMED
+      post-fix** (known_issues.md #59 — same bug CLASS as Phase 2's
+      composite_ig.py finding, #9/#19-adjacent but for head-conflation
+      not MHW-labeling)
+      `AttentionGradCAM.compute()` backward()'d the raw `(batch,2)`
+      [mean, log_var] output for `gaussian_nll=True` models without
+      selecting a column. Fixed: added a `head` parameter
+      (`"mean"`/`"quantile"`/legacy `"mean_mse"`), verified
+      backward-compatible with all 4 existing callers (none pass `head`,
+      all predate `gaussian_nll` models so fall through unchanged).
+
+- [x] `scripts/gradcam_quantile_partition.py`,
+      `scripts/gradientshap_quantile_partition.py`,
+      `scripts/eval_recall_v2_partition.py`,
+      `scripts/analysis/{persistence_recall_baseline,
+      quantile_calibration_check,lead_time_sweep_model_vs_persistence,
+      raw_ptho_bot_coastal_check,ig_coastal_decay_check}.py`,
+      `scripts/eval_test_metrics_from_best_ckpt.py` — **NEW, CONFIRMED**
+      Built this session, each dry-run/smoke-tested before any GPU
+      spend, all reused this project's canonical `best_ckpt()`/
+      `load_model_config()`/`LazyDataModule` pattern rather than
+      reimplementing (avoiding the exact Phase 5 consolidation issue
+      already flagged for `ensemble_skill.py`/`run_xai_ensemble.py`/
+      `ig_masked_batched.py`/`thermal_inertia_test.py`'s local
+      `best_ckpt()` copies).
+
+### Findings requiring a correction to a previously-stated conclusion
+
+- **known_issues.md #52's "12.2x enrichment... survives the artifact
+  control" claim was itself an artifact** of the sampling bug above,
+  caught while re-running IG with the fix. A direct raw-data check (no
+  model, no attribution method) gives the true NS-box open-water
+  enrichment as **1.39x**, not 12-20x — every gradient-based attribution
+  method (IG, GradientSHAP, GradCAM) overstates this, IG/GradientSHAP
+  most severely. `land_fill_mode=nearest`'s attributions land much
+  closer to the 1.39x truth than the committed (zero-fill) model's.
+  Full 4-method + raw-truth table in `docs/narrative.md`'s Aug 22 XAI
+  battery entries.
+
+### Decision made this phase
+
+**`land_fill_mode=nearest` adopted project-wide** (full, local, remote,
+lead-time sweep) — user's call after weighing the performance cost
+(confirmed real: r 0.8657->0.8237 on fold0, not a normalization
+artifact) against the coastal-artifact reduction (confirmed via 4
+independent XAI methods + a frozen-weight swap ablation). 34 GPU jobs
+(folds1-4 of the main model, local/remote 5-fold arrays, lead-time
+sweep at 3/5/14/30d x 5 folds) launched and completed cleanly. Full
+post-batch analysis done: pooled r + def1/def2 recall/precision/FPR per
+family, a persistence recall/precision/FPR baseline (so def1/def2
+numbers are interpretable, not bare percentages), quantile-head
+calibration (coverage collapses on extreme days, worsening with lead),
+and the final lead-time-sweep-vs-persistence figure (NO crossover in
+raw r at any lead — confirms the negative answer to Aug 21's "localizar
+el crossover" question — but a real, growing recall/precision TRADE
+favors the model at longer leads).
+
+### Not yet done (deferred deliberately, not forgotten)
+
+1. XAI battery (IG/GradCAM/GradientSHAP/occlusion) only ran on fold0 of
+   the main model family (committed + nearest) — not extended to
+   folds1-4, local/remote, or the lead-time-sweep families. Fold0's
+   triangulation already answers the physical-vs-artifact question the
+   whole investigation was for; further folds would mainly firm up
+   precision on numbers already directionally settled.
+2. The onset/transition-day skill fix (`eval_onset_skill_quantile_v2.py`,
+   per-year Hobday) was only run for the committed and nearest full
+   models — not for local/remote/lead-sweep. No request for this yet.
+3. Granger causality (item 4, composite/causal analysis) remains
+   methodologically broken (autocorrelation false-positive, p=0.0000
+   everywhere) — offered a fix (differencing/pre-whitening), never
+   confirmed as wanted. Explicitly the user's own lowest priority
+   ("no es un resultado de ML vendible").
+4. Three small, real P2 issues documented but not fixed (known_issues.md
+   #57 P2-1/2/3): NS box defined with two different lat/lon boxes across
+   modules; `compute_stats()`'s "train data only" claim has a small real
+   leak (~1% std); CLIM (0.1°)/DATA (0.5°) grid resolution mismatch,
+   unregridded. All confirmed <0.05°C effect, low priority.
+5. The planned physical folder reorg (`experiments/partition/README.md`
+   and `configs/partition/README.md`'s "Planned reorg" sections) is now
+   ACTIONABLE — all 34 jobs that were blocking it have finished. Not
+   done yet; still just an index/README, not a physical move.
+
+**Status: phase complete for its own stated scope (land_fill decision +
+34-job batch + XAI triangulation); items above are known, deliberate
+deferrals, not gaps in this phase's own execution.**
 
 ---
 

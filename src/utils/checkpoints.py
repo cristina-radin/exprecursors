@@ -19,6 +19,7 @@ CNNLSTM_DEFAULTS = {
     "pooling": "max",
     "quantile_head": False,
     "padding_mode": "zeros",
+    "state_feature": False,
 }
 CNNLSTM_MODEL_KEYS = ("in_channels",) + tuple(CNNLSTM_DEFAULTS)
 

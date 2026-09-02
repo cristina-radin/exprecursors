@@ -55,6 +55,8 @@ EXPERIMENTS_DIR = (
 )  # v1 checkpoints only, moved Aug 20 2026 -- see known_issues.md #45
 FIGURES_DIR = REPO_ROOT / "experiments" / "figures"
 FOLD_CACHE_DIR = FIGURES_DIR / "_fold_cache"
+PASO2_DIR = FIGURES_DIR / "step2_mhw_definition"
+PASO2_DIR.mkdir(parents=True, exist_ok=True)
 FOLD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 AREA_FRAC_THRESHOLD = 0.05  # MedECC 2023 default areal-extent threshold, chosen with the user Aug 20 2026 (see docs/narrative.md)
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -116,8 +118,8 @@ ax.set_title(
     f"Agreement: def1 (basin-mean) vs def2 (pixel+area>={AREA_FRAC_THRESHOLD})\nJaccard={jaccard*100:.1f}%"
 )
 plt.tight_layout()
-plt.savefig(FIGURES_DIR / "mhw_definition_agreement.png", dpi=150, bbox_inches="tight")
-print(f"Saved {FIGURES_DIR / 'mhw_definition_agreement.png'}")
+plt.savefig(PASO2_DIR / "mhw_definition_agreement.png", dpi=150, bbox_inches="tight")
+print(f"Saved {PASO2_DIR / 'mhw_definition_agreement.png'}")
 
 # ---------------------------------------------------------------------------
 # Part B: recall recomputed under BOTH definitions for quantile + focal
@@ -261,5 +263,5 @@ ax.set_ylabel("Recall (%)")
 ax.set_title("Extreme-day recall under both ground-truth definitions")
 ax.legend()
 plt.tight_layout()
-plt.savefig(FIGURES_DIR / "recall_both_definitions.png", dpi=150, bbox_inches="tight")
-print(f"Saved {FIGURES_DIR / 'recall_both_definitions.png'}")
+plt.savefig(PASO2_DIR / "recall_both_definitions.png", dpi=150, bbox_inches="tight")
+print(f"Saved {PASO2_DIR / 'recall_both_definitions.png'}")

@@ -17,14 +17,20 @@ import xarray as xr
 import yaml
 from torch.utils.data import Dataset
 
-DATA_FILE = "/p/project1/hai_1127/inputs/daily/preprocess_data/merged_daily.nc"
-
 
 class SpatialDataset(Dataset):
 
     def __init__(self, config_path: str):
         with open(config_path) as f:
             config = yaml.safe_load(f)
+
+        # Aug 24 2026: was a hardcoded JUWELS constant
+        # (/p/project1/hai_1127/...), never read from config despite
+        # every configs/spatial/*.yaml already having a `data_dir` field
+        # -- now wired through like the scalar pipeline's
+        # LazyDataModule/LazyDataset (data_dir comes straight from the
+        # resolved config, not an env var read inside the dataset class).
+        data_dir = config["data_dir"]
 
         self.variables = config["variables"]
         self.ocean_vars = set(config.get("ocean_variables", []))
@@ -34,7 +40,7 @@ class SpatialDataset(Dataset):
         self.clim_ref_end = config.get("clim_ref_end", 2014)
         self.clim_window = config.get("clim_window", 5)
 
-        ds = xr.open_dataset(DATA_FILE)
+        ds = xr.open_dataset(data_dir)
 
         self.years = ds.time.dt.year.values
         self.months = ds.time.dt.month.values
@@ -57,7 +63,7 @@ class SpatialDataset(Dataset):
         else:
             self.land_mask_tbottom = self.land_mask
 
-        print(f"Loading variables from {DATA_FILE.split('/')[-1]}...")
+        print(f"Loading variables from {str(data_dir).split('/')[-1]}...")
         self.data = {}
         for v in self.variables:
             self.data[v] = torch.tensor(ds[v].values, dtype=torch.float32)
@@ -117,11 +123,27 @@ class SpatialDataset(Dataset):
         train_t = sorted(
             set(idx + t for idx in train_indices for t in range(self.window_size))
         )
+        # Aug 24 2026: must mirror __getitem__'s exact per-variable masking
+        # (found by the spatial-pipeline data/split audit, F4) -- this used
+        # to mask EVERY variable to self.ocean_mask (the SST mask)
+        # regardless of what __getitem__ actually does per-variable:
+        # ptho_bot needs land_mask_tbottom (not the SST mask), and any
+        # variable not in ocean_vars (e.g. the ERA5 wind/pressure/radiation
+        # fields for TbotAtm) is never spatially masked at all in
+        # __getitem__ -- the model sees full-domain (land+ocean) values --
+        # so computing its stats over ocean-only pixels silently mismatched
+        # scope (land-region wind variance measured ~50% of ocean-region
+        # variance on real data, biasing every land pixel's normalized
+        # input by ~16-17%).
         means, stds = [], []
         for var in self.variables:
             frames = self.data[var][train_t]  # (N_train, H, W)
-            ocean_vals = frames[:, self.ocean_mask]  # (N_train, n_ocean)
-            valid = ocean_vals[~torch.isnan(ocean_vals)]  # exclude NaN coastal pixels
+            if var in self.ocean_vars:
+                mask = ~self.land_mask_tbottom if var == "ptho_bot" else self.ocean_mask
+                vals = frames[:, mask]  # (N_train, n_masked)
+            else:
+                vals = frames.reshape(frames.shape[0], -1)  # full domain
+            valid = vals[~torch.isnan(vals)]  # exclude NaN coastal pixels
             means.append(valid.mean().item())
             stds.append(valid.std().item() + 1e-8)
 

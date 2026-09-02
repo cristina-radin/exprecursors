@@ -100,7 +100,7 @@ def main():
     axes[2].legend()
 
     plt.tight_layout()
-    out_dir = REPO_ROOT / "experiments" / "figures"
+    out_dir = REPO_ROOT / "experiments" / "figures" / "step1_mean_clim_patch"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "mean_clim_smooth_correction.png"
     plt.savefig(out_path, dpi=150, bbox_inches="tight")

@@ -63,6 +63,20 @@ class LazyDataset(Dataset):
         # unaffected — only a loss variant that needs a DOY-dependent
         # threshold (e.g. focal-weighted NLL) should set this.
         self.return_target_doy = config.get("return_target_doy", False)
+        # Opt-in: __getitem__ additionally returns a normalized "state"
+        # scalar (Aug 23 2026) -- the target's own value at the LAST day
+        # of the input window (index i+window_size-1), i.e. exactly what
+        # lag-persistence uses as its prediction, normalized the same way
+        # as y. The model never otherwise sees the target itself as input
+        # (only ptho_bot, a different variable) -- this tests whether
+        # giving the network explicit access to "today's true state"
+        # beats the post-hoc linear hybrid (docs/narrative.md, Aug 23
+        # 2026 incremental-value-regression entry) via nonlinear/
+        # state-dependent combination. Off by default, same
+        # backward-compatibility reasoning as return_target_doy above.
+        # Mutually orthogonal to return_target_doy -- both can be True at
+        # once if ever needed (not currently exercised by any config).
+        self.use_state_feature = config.get("use_state_feature", False)
 
         self.ds = xr.open_mfdataset(file_name, parallel=True, engine="netcdf4")
 
@@ -95,6 +109,46 @@ class LazyDataset(Dataset):
             else:
                 self.land_masks[var] = self.is_land
 
+        # Opt-in: instead of the default hard land=0 (a spatially-flat
+        # constant region butting up against real, spatially-varying
+        # ocean values -- an artificial edge a CNN can trivially learn to
+        # detect, independent of any real precursor physics; see the
+        # comment above this block, and known_issues.md), fill land
+        # pixels with their nearest-ocean-neighbor's value at every
+        # timestep. Removes the flat-region cliff without inventing fake
+        # bathymetry -- the land value simply extends the nearest real
+        # ocean reading. Default "zero" (old behavior) -- opt-in like
+        # every other flag added this project (pooling, padding_mode,
+        # hobday_smooth_target, ...).
+        self.land_fill_mode = config.get("land_fill_mode", "zero")
+        if self.land_fill_mode not in ("zero", "nearest"):
+            raise ValueError(
+                f"land_fill_mode must be 'zero' or 'nearest', got {self.land_fill_mode!r}"
+            )
+        self._land_fill_idx = {}
+        if self.land_fill_mode == "nearest":
+            from scipy.ndimage import distance_transform_edt
+
+            for var in self.ocean_variables:
+                lm_np = self.land_masks[var].numpy()
+                _, (nearest_row, nearest_col) = distance_transform_edt(
+                    lm_np, return_distances=True, return_indices=True
+                )
+                land_rows, land_cols = np.where(lm_np)
+                src_rows = nearest_row[land_rows, land_cols]
+                src_cols = nearest_col[land_rows, land_cols]
+                self._land_fill_idx[var] = (
+                    torch.as_tensor(land_rows, dtype=torch.long),
+                    torch.as_tensor(land_cols, dtype=torch.long),
+                    torch.as_tensor(src_rows, dtype=torch.long),
+                    torch.as_tensor(src_cols, dtype=torch.long),
+                )
+                n_land = len(land_rows)
+                print(
+                    f"  land_fill_mode='nearest': {var} — filling {n_land} land "
+                    f"pixels from their nearest ocean neighbor (every timestep)"
+                )
+
         # Pre-load variables into memory
         print("Loading data into memory...")
         self.data = {}
@@ -102,6 +156,11 @@ class LazyDataset(Dataset):
             self.data[var] = torch.tensor(
                 self.ds[var].values, dtype=torch.float32
             )  # (time, lat, lon)
+            if self.land_fill_mode == "nearest" and var in self.ocean_variables:
+                land_rows, land_cols, src_rows, src_cols = self._land_fill_idx[var]
+                self.data[var][:, land_rows, land_cols] = self.data[var][
+                    :, src_rows, src_cols
+                ]
         self.target = torch.tensor(
             self.ds["target"].values, dtype=torch.float32
         )  # (time,)
@@ -296,6 +355,22 @@ class LazyDataset(Dataset):
                     data[i] -= self.clim_means[var][doy - 1]
 
             if var in self.ocean_variables:
+                # Normalization stats must always reflect the true ocean
+                # data distribution, excluding land, regardless of
+                # land_fill_mode -- land_fill_mode only controls what
+                # value the MODEL sees at land positions in the input
+                # tensor (0 vs. nearest-ocean-neighbor), it must not
+                # change what "typical ocean variability" means. Bug
+                # found Aug 21 2026 (user caught it): this branch used to
+                # gate on land_fill_mode == "zero", so land_fill_mode=
+                # "nearest" fell into the `else` branch below and
+                # computed mean/std over ALL pixels including the 9473
+                # land pixels (now filled with copied ocean-neighbor
+                # values) -- inflated ptho_bot's std by +23% (0.2775 ->
+                # 0.3425, confirmed against the saved training logs) and
+                # shifted its mean, silently attenuating every real ocean
+                # anomaly by ~19% for every land_fill_mode=nearest run so
+                # far. See known_issues.md and docs/narrative.md.
                 data[:, self.land_masks[var]] = float("nan")
                 mean = float(torch.nanmean(data))
                 std = float(torch.std(data[~torch.isnan(data)])) + 1e-8
@@ -341,8 +416,9 @@ class LazyDataset(Dataset):
 
     def __getitem__(self, idx: int):
         """
-        Returns (x_spatial, x_temporal, y), or (x_spatial, x_temporal, y,
-        target_doy) if self.return_target_doy is True:
+        Returns (x_spatial, x_temporal, y), plus target_doy if
+        self.return_target_doy, plus state if self.use_state_feature
+        (order: x_spatial, x_temporal, y, [target_doy], [state]):
             x_spatial:  (window_size, n_vars, lat, lon) — anomalised + normalised
             x_temporal: (window_size, 3)                — year_norm, month_sin, month_cos
             y:          (1,)                            — normalised North Sea SST anomaly
@@ -351,6 +427,13 @@ class LazyDataset(Dataset):
                 loss variants that need to look up a DOY-dependent threshold
                 (e.g. Hobday p90). Leap day (366) folded into 365, same
                 convention as the climatology-subtraction branch above.
+            state:      (1,)                            — the target's own
+                normalised value at the LAST day of the input window
+                (idx + window_size - 1), i.e. exactly what lag-persistence
+                uses as its prediction. Normalised with the SAME
+                target_mean/target_std as y (same physical quantity, same
+                scale) -- not a new leak, this day is always strictly
+                before the target day since lead_time >= 1.
         """
         window_spatial = []
         window_temporal = []
@@ -359,10 +442,14 @@ class LazyDataset(Dataset):
             # --- Spatial frame ---
             frame = torch.stack([self.data[v][t] for v in self.variables], dim=0)
 
-            # Land mask (ocean variables only)
-            for i, var in enumerate(self.variables):
-                if var in self.ocean_variables:
-                    frame[i, self.land_masks[var]] = float("nan")
+            # Land mask (ocean variables only) -- skipped when
+            # land_fill_mode="nearest": self.data[var] already has land
+            # pixels filled from their nearest ocean neighbor (done once
+            # in __init__), so there's nothing left to NaN out here.
+            if self.land_fill_mode == "zero":
+                for i, var in enumerate(self.variables):
+                    if var in self.ocean_variables:
+                        frame[i, self.land_masks[var]] = float("nan")
 
             # Subtract day-of-year climatology (ERA5 variables only)
             if self.clim_means:
@@ -406,12 +493,16 @@ class LazyDataset(Dataset):
         y_raw = self.target[target_idx]
         y = ((y_raw - self.target_mean) / self.target_std).unsqueeze(0)
 
-        if not self.return_target_doy:
-            return x_spatial, x_temporal, y
+        extra = []
+        if self.return_target_doy:
+            target_doy = int(self.doys[target_idx])
+            if target_doy >= 365:
+                target_doy = 365
+            extra.append(torch.tensor(target_doy, dtype=torch.long))
+        if self.use_state_feature:
+            state_idx = idx + self.window_size - 1
+            state_raw = self.target[state_idx]
+            state = ((state_raw - self.target_mean) / self.target_std).unsqueeze(0)
+            extra.append(state)
 
-        target_doy = int(self.doys[target_idx])
-        if target_doy >= 365:
-            target_doy = 365
-        target_doy = torch.tensor(target_doy, dtype=torch.long)
-
-        return x_spatial, x_temporal, y, target_doy
+        return (x_spatial, x_temporal, y, *extra)

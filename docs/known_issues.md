@@ -947,7 +947,939 @@ evidence — do not assume.
     this before assuming the mean-head path itself is even currently
     exercised correctly for GNLL models, separately from the quantile gap.
 
-## How to use
-For each script or memory doc reviewed, check against all 47 items and
-report: applies / does not apply / unclear — with the specific line as
-evidence for each "applies".
+48. **`scripts/persistence_remote_sst.py` missing `sys.path.insert()` --
+    crashed with `ModuleNotFoundError: No module named 'src'` on its very
+    first real execution on Raven, Aug 21 2026.** Unlike every other
+    script in `scripts/`/`scripts/analysis/` (which all do `sys.path.
+    insert(0, str(Path(__file__).parent.parent))` before `import src...`),
+    this one never had it -- Python puts the *script's own* directory on
+    `sys.path`, not the repo root, so `from src.utils.paths import ...`
+    only works if something else (an IDE, an old PYTHONPATH, running via
+    `python -m`) put the repo root on the path first. Suggests this
+    script was never actually run end-to-end in this Raven environment
+    before Paso 7 repurposed it (also see #45/#46 -- several scripts this
+    session turned out to have never been exercised post-migration).
+    Fixed by adding the same `sys.path.insert()` line used everywhere
+    else. Also extended for `stratified_kfold` support in the same pass
+    -- see `docs/narrative.md`'s Paso 7 entry.
+
+49. **`scripts/ig_simple.py` is more broken than #47 described -- found
+    Aug 21 2026 while starting the XAI adaptation for `full_gnll_quantile_v2`,
+    paused before any GPU launch, needs the user's input on approach.**
+    #47 only flagged that `src/xai/integrated_gradients.py`/`grad_cam.py`
+    don't call `forward_with_quantile()`. Checking the actual driver
+    script used for the partition pipeline (`ig_simple.py`) surfaced
+    independent, more serious problems, found by direct code reading
+    (not assumed):
+    - `from src.data.dataset import MHWDataset` (line 26) -- **this class
+      does not exist** in `src/data/dataset.py` (only `LazyDataset` does,
+      confirmed by grep). The script cannot even start; almost certainly
+      never re-run since a prior refactor renamed the dataset class.
+    - `rng = np.random.default_rng(0)` (line 84) -- the same wrong-RNG /
+      wrong-split-mode bug as #1/#42's meta-hallazgo (`persistence_
+      remote_sst.py`, now fixed). This one is `kfold`-shaped (not even
+      `stratified_kfold`-aware) and was explicitly left unfixed in the
+      Aug 20 2026 Paso 3 pass ("only affects XAI, lower priority") --
+      that "later" is now, since XAI is next.
+    - **Real correctness bug for `gaussian_nll=True` models, unrelated to
+      the quantile-head gap**: `integrated_gradients()` (lines 33-55) does
+      `out = model(interp_s, interp_t); if isinstance(out, tuple): out =
+      out[0]; out = out.mean(); out.backward()`. For `gaussian_nll=True`
+      (our committed model), `model(...)` returns a plain tensor of shape
+      `(batch, 2)` -- `[mean, log_var]` -- not a tuple, so the
+      `isinstance` check does nothing, and `out.mean()` with no `dim`
+      averages the mean AND log-variance columns together into one
+      meaningless scalar before backprop. The resulting IG map would
+      explain an average of "predicted temperature" and "predicted
+      uncertainty" mixed together -- silently wrong for every
+      `gaussian_nll=True` run this script has ever produced, independent
+      of quantile_head. Needs `out[:, 0].mean()` (mean-head only) or a new
+      branch for `q_pred` via `forward_with_quantile()`.
+    - Never calls `forward_with_quantile()` -- confirms #47's gap in a
+      third location.
+    - Loads checkpoints via raw `torch.load()` + manual `state_dict` key
+      surgery instead of the established `best_ckpt()` +
+      `CNNLightningModule.load_from_checkpoint()` pattern used everywhere
+      else in the audited codebase this session -- inconsistent, another
+      thing that could silently pick a non-best checkpoint.
+    **Not fixed in this pass.** Scope turned out to be "resurrect a script
+    with 4 independent bugs, one of which pre-dates and is unrelated to
+    the quantile-head work", not "adapt one function for
+    forward_with_quantile()" as originally scoped when XAI launch
+    authorization was given (Aug 21 2026, "si sale bien lanza XAI
+    tambien... con el mismo rigor"). Paused before writing a large
+    untested rewrite unsupervised -- needs the user's input on approach
+    (fix `ig_simple.py` in place vs. build on `src/xai/
+    integrated_gradients.py` instead, which at least imports correctly)
+    before any GPU time is spent on XAI.
+
+50. **IG on an `.eval()`-mode LSTM needs `torch.backends.cudnn.enabled =
+    False` around the forward/backward, or it crashes -- rediscovered
+    the hard way Aug 21 2026 building the replacement for `ig_simple.py`
+    (#49).** `scripts/ig_partition_quantile.py`'s first real GPU attempt
+    (job 29433726) failed with `RuntimeError: cudnn RNN backward can
+    only be called in training mode` -- cuDNN's fused LSTM kernel
+    doesn't support `backward()` while the model is in eval mode. The
+    OLD `src/xai/integrated_gradients.py::_integrated_gradients_forward()`
+    already had the correct workaround
+    (`torch.backends.cudnn.enabled = False` wrapping the forward call,
+    restored after) -- easy to miss/drop when rewriting IG code since it
+    looks like an unrelated performance toggle, not a correctness
+    requirement, until you hit this exact error. Fixed in
+    `ig_partition_quantile.py` by restoring the same pattern. Also found
+    the same run's real memory cost was mis-estimated before the first
+    launch: a naive "n_steps acts like a batch of n_steps" mental model
+    undercounts by a factor of `window_size` (IG's per-sample
+    interpolation batch flows through the CNN encoder as
+    `(n_steps*window, n_vars, H, W)`, not `(n_steps, n_vars, H, W)`) --
+    n_steps=50 x window=60 = 3000 images at once OOM'd a 40GB A100 on the
+    very first sample. Fixed with chunked interpolation (chunk_size=5,
+    exact gradient accumulation, not an approximation) -- see the
+    function's docstring for the full account.
+
+51. **Population-averaged IG maps (mean vs. quantile head) are nearly
+    identical -- quantified, not assumed, Aug 21 2026, `ig_quantile_v2_
+    fold0` outputs analysed with a standalone numpy script (no GPU).**
+    Interpreting the 10 maps produced by #50's run (`ig_partition_quantile.py`,
+    fold0, n=300, n_steps=50): spatial Pearson correlation between the
+    `mean_head` and `quantile_head` maps is **0.998-0.999 for all 5
+    variables** (`ptho_bot` 0.999, `u10` 0.999, `v10` 0.999, `msl` 0.998,
+    `ssr` 0.999), and the head-to-head difference map's total |IG| is only
+    **3-11% of the mean map's total |IG|** (`ssr` 2.7%, `ptho_bot` 5.8%,
+    `v10` 8.0%, `u10` 9.4%, `msl` 11.0%). For `ptho_bot` the single largest
+    difference is located at the exact same pixel as the single largest
+    mean-head value -- i.e. the "difference" there is a magnitude rescaling
+    of the same dominant feature, not a distinct spatial pattern. Visually
+    confirmed on the rendered PNGs (`ig_{mean,quantile}_head_ssr.png` are
+    indistinguishable by eye). Architectural explanation, not a bug: per
+    `src/models/cnn_lstm.py`'s `_encode()`/`forward_with_quantile()`
+    (`_encode()` docstring, lines 222-233), both heads read the *same*
+    `combined` backbone vector through independent `self.fc`/
+    `self.quantile_head` linear layers with disjoint parameters (confirmed
+    by reading the class, not assumed) -- so `d(head_output)/d(input) =
+    d(head_output)/d(combined) · d(combined)/d(input)`, and the second
+    (shared) factor dominates once averaged over 300 samples and the full
+    60-day window, because it reflects which input pixels the CNN encoder
+    is structurally sensitive to at all, largely independent of which small
+    trained head reads out from it. One consistent secondary pattern: the
+    quantile head's total |IG| is uniformly *slightly* higher than the mean
+    head's for every variable (+0.4% `ssr` to +10% `msl`), i.e. mildly more
+    input-sensitive overall, but this is a magnitude effect, not a
+    location/attribution-pattern difference. **Implication for future XAI
+    work**: this particular visualization (mean signed IG, averaged over
+    samples and window) does not discriminate what makes the quantile head
+    behave differently from the mean head -- it mostly reproduces shared
+    backbone/input structure. A more targeted follow-up (IG on `q_pred -
+    y_hat_mean` directly, isolating exactly the head-differential gradient
+    direction instead of computing each head separately and diffing after
+    averaging) is a candidate next step, discussed with the user before any
+    GPU time, not launched in this pass -- see `docs/narrative.md`'s Aug 21
+    2026 XAI interpretation entry. Separately, per #26 (8px MaxPool-cascade
+    grid artifact, confirmed generic to any spatial IG map from this
+    architecture): `ig_partition_quantile.py` does not apply the
+    `_smooth_ignore_nan` display smoothing that `ig_signed_partition.py`
+    added as a (visual-only) mitigation -- not fixed here, since every
+    macro-scale feature interpreted in the narrative.md write-up (NS-box
+    concentration, Gulf-Stream band, tropical band) spans 10-30 degrees,
+    far above the ~4-degree (8px @ 0.5°) artifact scale, so the
+    interpretation itself is not affected, but the raw PNGs should not be
+    over-read at sub-8px resolution and the smoothing gap should be closed
+    before these maps go in a paper figure.
+
+52. **`ptho_bot`'s coastal IG "signal" is predominantly a land-masking
+    edge artifact, not shelf-break physics -- found Aug 21 2026, user
+    was right to be skeptical of the original interpretation.** The Aug
+    21 write-up in `narrative.md` originally described `ptho_bot`'s sharp
+    coastal structure (Grand Banks/Nova Scotia, lat 42-48N lon -70..-55,
+    plus a ring around the North Sea/British Isles) as consistent with a
+    physical shelf-break/frontal mechanism. Not checked against an
+    artifact hypothesis at the time -- checked properly when the user
+    pushed back ("no me fio de que sea importante la señal ahi sino que
+    es algun artifacto"). Cause: `ptho_bot` is the only one of the 5
+    input variables that is land-masked (`dataset.py`, `nan_to_num(nan=
+    0.0)` in normalized space on land, identical to IG's own zero
+    baseline) -- this creates a structural ocean-value-next-to-zero-fill
+    discontinuity at every coastline that the CNN's receptive field can
+    react to, independent of whether the mask itself is correctly aligned
+    (#2's bug, already fixed, was about a *misaligned* mask; this is a
+    *structural* edge effect present even with the correct mask, not
+    previously tested for). `u10`/`v10`/`msl`/`ssr` are never masked, so
+    have no such edge. **Quantified via distance-to-coast binning**
+    (`scipy.ndimage.distance_transform_edt` on `land_mask_tbottom`, mean
+    |IG| per bin, `ig_mean_head.npy` fold0): `ptho_bot` decays smoothly
+    and monotonically from 3.76e-6 at 1-2px from land to 0.24e-6 in open
+    ocean (>9px) -- a **~15x** drop, the textbook signature of a boundary
+    artifact. Control check on the two unmasked variables shows **no such
+    decay**: `u10` 5.69e-7 (coast) -> 9.27e-7 (open ocean), actually
+    *increasing*; `ssr` 8.80e-7 -> 1.13e-6, also flat/increasing. This
+    rules out "any variable naturally has stronger coastal IG" as an
+    alternative explanation -- only the masked variable shows the decay.
+    **Not fully an artifact, though**: repeating the NS-box
+    concentration calculation restricted to open-water pixels only
+    (>5px from coast, n=177 NS-box / n=12889 domain-wide ocean pixels)
+    still gives 16.8% of open-water |IG| in the NS box vs. 1.4% pixel-count
+    share -- **12.2x enrichment, higher than the naive all-pixel 8.5x
+    figure, not lower** -- so `ptho_bot`'s broad NS-box importance
+    survives the artifact control; only the sharp coastal-rim *features*
+    specifically (what the un-masked raw plots visually emphasized) are
+    artifact-dominated. **Practical fix applied**: `ig_partition_quantile.py`
+    now greys out land (`facecolor="lightgray"`, data set to NaN via the
+    correct `land_mask_tbottom`) for `ptho_bot` in its plots, leaving the
+    4 atmospheric variables unmasked (their land-area values are real,
+    see the land-signal check earlier in this doc) -- makes the
+    coastal-rim-vs-open-water split visually obvious instead of implying
+    a single "hot" feature. All 10 existing fold0 PNGs regenerated from
+    the already-saved `.npy` (no GPU touched). **Not fixed**: the
+    underlying zero-fill masking convention itself (would need e.g. a
+    non-zero/mean-value fill, or excluding land-adjacent pixels from
+    IG's interpolation path, or a differently-behaved baseline for masked
+    variables) -- out of scope for this pass, flagged for whoever next
+    works on `ptho_bot`-specific XAI, especially before using the Grand
+    Banks/coastal-rim features in a paper figure or physical-mechanism
+    claim.
+    **Update Aug 21 2026, user request**: added a visual hatch overlay
+    (`ax.contourf(..., colors="none", hatches=["///"])`) marking the <3px
+    coastal buffer on `ptho_bot` plots (all 3 heads), instead of hiding
+    it -- keeps the color data visible (so a real signal underneath, if
+    any, is still inspectable) while flagging "interpret with caution
+    here" directly in the figure, title updated to reference this entry.
+    3px chosen as a reasonable visual flag, not a rigorous cutoff --
+    the underlying decay is continuous (see the distance-binned table
+    above), there is no clean threshold. No GPU used, regenerated from
+    saved `.npy`.
+    **Removed again Aug 24 2026, user request** ("eso ya lo
+    solucionamos"): now that `land_fill_mode=nearest` is adopted
+    project-wide and confirmed (via the full 4-method triangulation
+    below) to meaningfully reduce the coastal-edge artifact, the extra
+    visual caution-flag on top of the already-mitigated `ptho_bot` maps
+    was judged redundant. Hatch-drawing code and the title annotation
+    removed from `ig_partition_quantile.py`; land-greying (a separate,
+    still-kept fix -- not a caveat overlay, just correct masking) is
+    unaffected. The 3 fold0/`committed` `ptho_bot` PNGs regenerated
+    without hatching from the same saved `.npy`, no GPU. Note this only
+    ever applied to `ig_partition_quantile.py`'s own output --
+    GradCAM/GradientSHAP's plotting scripts never had a hatch overlay to
+    begin with.
+    **Root-cause options if the model is ever retrained (analysis only,
+    NOT implemented, no retraining authorized or done)**:
+    1. **Non-zero / inpainted land fill** (most direct fix): instead of
+       `nan_to_num(nan=0.0)` in normalized space, fill land pixels with a
+       spatially-smooth extrapolation of the nearest real ocean values
+       (nearest-neighbour or Laplace inpainting) so the CNN never sees a
+       flat-zero-next-to-real-data cliff at the coast. Doesn't invent
+       real bathymetric information, but removes the artificial edge the
+       convolution reacts to. Requires changing `dataset.py`'s masking
+       step and retraining every `ptho_bot`-using experiment from
+       scratch (all folds) -- real compute cost, would need to be a
+       deliberate, scheduled decision, not a quick patch.
+    2. **Explicit land-mask input channel**: give the model
+       `land_mask_tbottom` itself as an extra input channel, so it has an
+       unambiguous way to know "this pixel is land" instead of having to
+       infer it from the zero value / spatial discontinuity. Doesn't
+       guarantee the CNN stops reacting to the boundary, but removes the
+       ambiguity between "zero because land" and "zero because true
+       anomaly ~ 0" that may be part of why the boundary is
+       informative-looking to begin with. Also requires retraining.
+    3. **Does NOT work, don't bother**: changing IG's baseline away from
+       zero (e.g. per-pixel local mean) for `ptho_bot` only. The
+       artifact is not a baseline-attribution-arithmetic effect -- it's
+       the model's actual gradient reacting to a hard edge that exists in
+       the real input regardless of what baseline IG walks from. Confirmed
+       by reasoning, not separately tested empirically (would be quick to
+       verify if ever in doubt: rerun IG with a non-zero baseline and
+       check the coastal decay pattern persists).
+    4. **No-retrain cross-check (cheap, could do without waiting for a
+       retrain)**: occlusion-based attribution (patch the input to
+       baseline and measure the output delta) instead of gradient-based
+       IG, for `ptho_bot` specifically -- has a different bias structure
+       (doesn't depend on the exact local gradient shape at the coastal
+       edge), so agreement/disagreement with the current IG coastal
+       pattern would be informative either way. Not attempted this
+       session -- a candidate for a future low-cost sanity check before
+       committing to option 1/2's retraining cost.
+    **Update Aug 21 2026, main modeling session (parallel conversation)**:
+    option 1 (nearest-neighbor land fill) IMPLEMENTED in `src/data/
+    dataset.py` -- new opt-in `land_fill_mode` config key (`"zero"`
+    default/old behavior, `"nearest"` new), applied once per ocean
+    variable in `LazyDataset.__init__` via `scipy.ndimage.
+    distance_transform_edt(..., return_indices=True)` (nearest-ocean-pixel
+    index map computed once, reused every timestep -- cheap, not
+    recomputed per `__getitem__` call). `compute_stats()`/`__getitem__()`'s
+    NaN-based land masking skipped when `land_fill_mode="nearest"` (land
+    is already filled with real values, nothing left to NaN out).
+    Verified with real data (`scripts/analysis/plot_land_fill_comparison.py`,
+    `ptho_bot`, 2014 doy150): ocean pixels bit-identical between modes
+    (`max|diff|=0.0`, proven not assumed), land pixels go from flat 0.0 to
+    a real range (std=0.34, matching neighboring ocean variability) --
+    exactly the intended effect, no accidental change to ocean data. Not
+    yet used in a real training config or retrained -- ready for a
+    controlled comparison (identical config otherwise) once GPU frees up.
+    See `docs/narrative.md`'s Aug 21 2026 entries for the request context.
+    **Update Aug 21 2026, option 4 (occlusion cross-check) also done**:
+    `scripts/occlusion_ptho_bot_sanity_check.py` (job 29441983, n=300,
+    committed fold0 checkpoint, not the land_fill retrain) replaces
+    `ptho_bot` with zero across the full time window, per distance-to-
+    coast bin, and measures the actual forward-pass |output delta|
+    (mean+quantile head) instead of a gradient. **Partial corroboration,
+    partial contradiction of the IG-based read**:
+    - Coastal decay: CONFIRMED with an independent method. 1-2px vs
+      >9px ratio is 7.29x (mean head) / 7.73x (quantile head) -- smaller
+      than IG's ~15.7x but the same qualitative signature (smooth
+      monotonic decay from coast to open ocean). Rules out "IG-specific
+      gradient artifact" as the sole explanation -- the model's actual
+      functional output really is more sensitive to zeroing near-coast
+      `ptho_bot` than open-ocean `ptho_bot`, consistent with the land-
+      masking-edge story.
+    - NS-box open-water enrichment: NOT reproduced, in fact reversed.
+      IG found 12.2x enrichment (16.8% of open-water |IG| in 1.4% of
+      open-water pixel-count). Occlusion finds **0.71x for both heads**
+      (~1.0% of open-water |Δoutput| in that same 1.4% pixel share) --
+      i.e. no special NS-box importance under occlusion, if anything
+      slightly *under*-represented. This is a real, unresolved
+      divergence between the two methods, not explained yet -- plausible
+      reading (not verified): IG's gradient-path integration may pick up
+      correlated/smooth structure specific to the NS box (which is by
+      construction spatially correlated with the target) in a way a
+      single hard zero-out doesn't, but this is a hypothesis, not
+      confirmed. Do not present the 12.2x NS-box IG enrichment as
+      corroborated by an independent method -- it isn't, on this check.
+      Flagged for discussion before citing either number as "the"
+      precursor-box-importance figure.
+    Figures/data: `experiments/figures/xai_integrated_gradients/
+    occlusion_sanity_fold0/`.
+    **Update Aug 21 2026, final check against the raw data (user request:
+    "esta diferencia se ve tambien en la variable raw?"), resolves the
+    physical-vs-artifact question for good.**
+    `scripts/analysis/raw_ptho_bot_coastal_check.py` computes the RAW
+    pointwise Pearson r between `ptho_bot(t)` and the NS-box
+    `target(t+7)` over the full 40yr record — no model, no IG, no
+    occlusion, just the data. Result: **the domain-wide coastal-decay
+    pattern IS NOT PRESENT in the raw data at all** — mean|r| is flat to
+    slightly *reversed* from coast to open ocean (0.313 at 1-2px -> 0.360
+    at >9px, ratio 0.87x, vs. IG's ~18x). `ptho_bot`'s raw variance DOES
+    have a real, strong coastal gradient (std 0.429 at 1-2px -> 0.029 at
+    >9px, ~15x, physically real — shallower water near coast is more
+    thermally variable) but this variance gradient does not translate
+    into a real predictive-correlation gradient. **Two stacked, additive
+    artifact sources, not one** (user caught an oversimplification here,
+    Aug 21 2026 — corrected): comparing all three decay ratios (raw
+    truth 0.87x, `land_fill=nearest` 12.99x, `land_fill=zero` 18.76x)
+    shows (1) the dominant jump, 0.87x→12.99x, is IG's own sensitivity to
+    `ptho_bot`'s real local variance/gradient-path magnitude — present
+    under ANY land-fill convention, since `nearest` has no discontinuity
+    and still shows it, not fixable by land_fill_mode; PLUS (2) a real,
+    separate, smaller jump, 12.99x→18.76x, specifically caused by the
+    zero-fill edge/mask itself — exactly what land_fill_mode=nearest
+    removes. Both are non-physical (raw correlation stays flat either
+    way), but only (2) is a preprocessing artifact; (1) is intrinsic to
+    IG as a method. Switching land_fill_mode only ever addresses (2), the
+    smaller of the two. **Region breakdown settles the
+    Grand-Banks-vs-North-Sea question directly**: NS/British-Isles
+    near-coast raw |r|=0.685, **1.91x** the domain's far-from-coast
+    baseline (0.360) — real, physically sensible (it's the target's own
+    local box), genuinely useful. Grand Banks/Nova Scotia near-coast raw
+    |r|=0.164, **0.46x** baseline — *below* average, i.e. the raw data
+    gives ZERO support for Grand Banks proximity being predictive of NS
+    MHWs at lead=7d (also physically implausible on this timescale:
+    direct ocean advection from Grand Banks to the North Sea takes
+    weeks-months via the NAC, not 7 days). **Verdict, final**: only the
+    North Sea's own coastal margin carries a real, raw-data-verified
+    precursor signal; the broader "any coastline matters" IG pattern
+    (including Grand Banks specifically) is an attribution artifact tied
+    to `ptho_bot`'s local variance structure, not physics — do not use
+    Grand Banks or any other remote coastline's IG attribution as a
+    physical claim in the paper. The North Sea's own near-coast
+    attribution can be cited as real, with this raw-data check as
+    support.
+
+    **CORRECTION, Aug 22 2026 — the "12.2x enrichment... survives the
+    artifact control" claim above overstated the real signal by ~10x;
+    caught during the XAI battery re-run, not by the user this time.**
+    That 12.2x/16.8%-of-open-water-|IG| figure was computed on IG maps
+    with the sampling bug (known_issues.md #57 P1: 299/300 samples from
+    1985 alone) still present -- re-running with the fixed stratified
+    sampling gives a DIFFERENT number: **16.43x/16.82x** (mean/quantile
+    head) for the committed (zero-fill) model, if anything larger, not
+    smaller. But a DIRECT raw-data check (no model, no attribution
+    method at all -- same pointwise-correlation methodology as the
+    Grand-Banks-vs-North-Sea check above, restricted to NS-box
+    open-water pixels >5px from coast vs domain-wide open-water) gives
+    only **1.39x** enrichment (mean|r|=0.498 NS-box vs 0.357 domain-wide)
+    -- an order of magnitude below what IG (16.4x) or GradientSHAP
+    (18.6-20.4x, see the XAI-battery entry below) attribute to this
+    region on the committed model. GradCAM (6.4x) and occlusion sit
+    between the two. **Corrected verdict**: there IS a small, real,
+    raw-data-verified enrichment in the NS box's open-water interior
+    (~1.4x) -- genuine, not zero -- but every gradient-based attribution
+    method massively overstates it on the committed (zero-fill) model,
+    IG and GradientSHAP most severely (~12-15x overstatement),
+    consistent with the same variance-sensitivity artifact already
+    identified for the coastal-rim decay. The land_fill_mode=nearest
+    model's attributions (IG 4.8-5.3x, GradCAM 1.6x) land much CLOSER to
+    the 1.4x raw truth than committed's -- an additional, independent
+    argument for `nearest` beyond the coastal-decay-ratio reduction
+    already documented, and a caution against ever citing a bare
+    attribution-method enrichment number as if it were the real effect
+    size without a raw-data cross-check. See the XAI-battery entry in
+    `docs/narrative.md` (Aug 22 2026) for the full 3-method comparison
+    table and `results/all_results.csv`'s
+    `ns_box_enrichment_raw_data_ground_truth` row.
+
+53. **`stratified_kfold`'s non-consecutive test years can spuriously
+    bridge across year boundaries in any script that concatenates a
+    fold's test samples and runs `apply_hobday()`/lag persistence on the
+    whole array at once -- found Aug 21 2026 while building
+    `eval_onset_skill_curve.py`, not yet checked in
+    `eval_onset_skill_quantile_v2.py` (job 29436340, the onset-skill
+    negative result already in narrative.md).** `stratified_kfold`
+    assigns non-consecutive years to a fold's test set (e.g. fold0:
+    1985, 1991, 2000, ...). If a fold's test samples are sorted and
+    concatenated into one array, `apply_hobday()`'s gap-closure logic
+    (assumes a contiguous daily series) could spuriously merge the tail
+    of one test year with the head of an unrelated, calendar-distant
+    year if both happen to show exceedance near that array boundary --
+    creating a false MHW event / onset day that never existed, or
+    incorrectly relabeling a real onset as "mid_event". Same risk for
+    naive lag-7 persistence (`trues[i-7]`) computed on the concatenated
+    array -- would pair a day with a value from a completely different,
+    non-adjacent year. Fixed in `eval_onset_skill_curve.py`: apply
+    `apply_hobday()`/`days_since_onset()` per calendar year (each year's
+    own samples ARE internally contiguous) before reassembling, and
+    invalidate any lag-7 persistence pair whose two days don't share the
+    same year. **Not yet applied to `eval_onset_skill_quantile_v2.py`**
+    -- its onset result (n=56, r_mean=-0.293) may be mildly affected
+    (at most a handful of the 56 onset days, right at fold-internal year
+    transitions, could be mislabeled). Check `eval_onset_skill_curve.py`'s
+    day=0 pooled result against that number once it completes; if
+    consistent, the existing narrative.md finding stands as reported --
+    if meaningfully different, redo `eval_onset_skill_quantile_v2.py`
+    with the same per-year fix before citing it further.
+
+54. **Per-year Hobday processing (the #53 fix) can truncate or hide a
+    real MHW event that genuinely spans Dec31→Jan1 of two consecutive
+    calendar years — found Aug 21 2026, user-requested documentation,
+    quantified against the full contiguous 40-year series.** #53 fixed
+    a real bug (false event merging across calendar-distant,
+    non-adjacent years inside one fold's concatenated, non-consecutive
+    test years) by processing `apply_hobday()`/`days_since_onset()` one
+    calendar year at a time. That fix is correct for its own problem,
+    but it has a cost: **any genuinely continuous event that happens to
+    straddle Dec31→Jan1 gets cut at the year boundary**, because
+    per-year processing never sees the two halves as one contiguous
+    array, regardless of whether both years land in the same fold or
+    different folds. Concretely this can (a) split one real event into
+    two, (b) mislabel the January portion as a fresh "onset" rather than
+    a continuation, and (c) drop either half entirely if it doesn't meet
+    the 5-day minimum-duration threshold on its own once separated from
+    the other half.
+    **Quantified** (whole 40-year contiguous NS-box series, not
+    per-fold, so this measures the true rate before any fold-splitting
+    is applied): of the 39 consecutive-year boundaries in the record
+    (1985→2024), **3 (2006→2007, 2015→2016, 2022→2023) have the model's
+    ground-truth MHW flag =True on both the last available day of
+    December and Jan 1** — i.e. a genuine boundary-spanning event. That
+    is 3 of 52 total Hobday events over the record (~5.8%) that touch a
+    year boundary and would be affected by per-year splitting somewhere
+    in the pipeline.
+    **Practical impact on results already reported**: `eval_event_
+    detection.py`'s n_events=56 and `eval_onset_skill_curve.py`'s
+    day-since-onset curve both use per-year processing (the #53 fix)
+    inside each fold's own test years — so any of those 3 real
+    boundary-spanning events that happens to fall inside one fold's test
+    set is a candidate for exactly this artifact (undercounted, split
+    into two weaker/shorter events, or one half dropped below the
+    5-day minimum). Not re-verified per-fold here (would need cross-
+    referencing which of {2006,2007,2015,2016,2022,2023} land in the
+    same fold's test set, and whether the split half still clears 5
+    days) — flagged as a caveat on the onset/event-detection headline
+    numbers, not yet corrected. A fix, if needed later, would require
+    processing complete calendar-year PAIRS at the fold's true year
+    boundaries (not just within one fold) rather than one year at a
+    time — deferred, not urgent per user (documentation request, not an
+    immediate fix request).
+
+55. **`compute_stats()` computed ptho_bot's normalization mean/std over
+    ALL pixels (including land) for `land_fill_mode="nearest"`, silently
+    inflating std by +23% and shifting mean — found Aug 21 2026, user
+    caught it, not derived from any tool output.** `src/data/dataset.py`
+    `compute_stats()` (~line 343) gated the "exclude land pixels before
+    computing mean/std" branch on `land_fill_mode == "zero"` specifically
+    — so `land_fill_mode="nearest"` fell into the `else` branch and
+    computed `data.mean()`/`data.std()` over the FULL grid, including the
+    9473 land pixels that `nearest` mode fills with values copied from
+    their nearest ocean neighbor (real, correlated-with-ocean values, not
+    zero or NaN — so they don't cancel out or get naturally excluded).
+    Confirmed against the actual saved training logs, not just reasoning:
+    zero-mode (ocean-only, correct) gives `ptho_bot: mean=0.0229,
+    std=0.2775` (`slurm-qhead_v2_f0-29426606.out`); nearest-mode (bugged)
+    gave `mean=0.0371, std=0.3425` (`slurm-gnllq_landfill_f0-
+    29438575.out`) — **std inflated exactly +23.4%**, mean shifted too.
+    Effect: every real ocean `ptho_bot` value gets divided by a std that
+    is ~23% too large, silently attenuating the real signal by ~19%
+    (1/1.234) in normalized space, for every `land_fill_mode="nearest"`
+    run to date. **This invalidates every land_fill_mode=nearest result
+    produced today before the fix**: the fold0 retrain's test metrics
+    (`r=0.8313` etc.), the IG coastal-decay comparison
+    (12.99x/13.51x vs committed's 18.76x/18.24x), and the weight-swap
+    ablation (13.19x/12.49x, 14.34x/15.54x) — IG operates in normalized
+    space with a zero baseline, so a silently rescaled input directly
+    changes IG's gradient magnitudes, confounding the entire "does
+    land-fill content matter" causal story built on top of these numbers.
+    **Fixed** (same commit as this entry): removed the `and
+    self.land_fill_mode == "zero"` condition — land pixels are now
+    excluded from normalization-stats computation for ocean variables
+    under BOTH modes, matching the physical intent (land_fill_mode should
+    only control what the model sees at land positions in the input
+    tensor, never what "typical ocean variability" means for
+    normalization). **Verified**: re-running `LazyDataModule.setup()` on
+    the land_fill config after the fix gives `ptho_bot: mean=0.0229,
+    std=0.2775` — bit-identical to zero-mode, as expected since ocean
+    pixel values are themselves bit-identical between the two conventions
+    (already verified separately). **Not yet done**: re-running fold0
+    training, the IG coastal-decay check, and the weight-swap ablation
+    with the fix — every land_fill_mode=nearest number in
+    `results/all_results.csv` and the "two stacked causes" / weight-swap
+    narrative in `docs/narrative.md` needs to be treated as unreliable
+    until redone. All `land_fill_mode="nearest"` SLURM jobs in flight at
+    discovery time (fold0 retrain's folds 1-4, local, remote) were
+    cancelled rather than left running on the buggy stats.
+
+56. **Three findings from a methodological review pasted by the user Aug
+    21 2026, all confirmed against the actual code before acting — not
+    taken on faith.**
+    1. **`def2`'s ground truth used the OLD, unsmoothed climatology
+       reference — the serious one.** `scripts/analysis/
+       calibrate_mhw_area_threshold.py` computed `area_frac_timeseries.
+       npy` (saved Aug 20 13:09) from `ds.to_anom` and `clim.p90_thresh`
+       BOTH raw/unsmoothed — confirmed by reading the script (old lines
+       44/50, no `uniform_filter1d` anywhere). But v2 models train with
+       `hobday_smooth_target=True`, whose target/prediction space and
+       `load_ns_p90()` threshold ARE smoothed (31-day
+       `uniform_filter1d`, `src/utils/hobday.py`). `scripts/analysis/
+       quantile_head_recall_v2_all5.py` then compares `ext1` (def1,
+       smoothed `thresh1`) and `ext2 = area_frac_c >=
+       AREA_FRAC_THRESHOLD` (def2, unsmoothed `area_frac`) in the same
+       table — two different climatology references. **Fixed**:
+       `calibrate_mhw_area_threshold.py` now smooths both `p90_thresh`
+       and `mean_clim` per-pixel along the doy axis (same
+       `uniform_filter1d(size=31, mode="wrap")` convention as
+       `load_ns_p90`/`load_ns_mean_clim_smooth_delta`, applied per grid
+       cell here since this script needs a spatial field, not the
+       NS-box-mean scalar those two helpers return) before computing
+       exceedance. Old buggy array backed up to
+       `experiments/figures/area_frac_timeseries_UNSMOOTHED_BUGGY_2026-
+       08-20.npy`. Regenerated: **423 of 14600 days (2.9%) flip sides of
+       the 0.05 area-fraction threshold** between old and new — not
+       negligible. `quantile_head_recall_v2_all5.py` relaunched (job
+       29450802) with the corrected `area_frac`; previous def2
+       recall/precision numbers in `results/all_results.csv` need
+       updating once it finishes.
+    2. **`eval_onset_skill_quantile_v2.py` never got the #53 per-year
+       fix, despite its own comment (old lines 142-145) incorrectly
+       claiming the series was "CONSECUTIVE-in-time."** Confirmed by
+       reading the code: `onset_mask()` ran `apply_hobday()` on each
+       fold's full concatenated test series at once; `stratified_kfold`
+       assigns non-consecutive years per fold (e.g. fold0: 1985, 1991,
+       2000, ...), so `order = np.argsort(target_idx)` only sorts
+       samples chronologically, it does not make them calendar-
+       contiguous — sorted order and calendar contiguity are not the
+       same thing, and the old comment conflated them. Also confirmed:
+       `persist[LEAD:] = trues[:-LEAD]` had no year-boundary
+       invalidation either, same underlying issue. **This is exactly
+       #53's bug class**, just in a script #53 never touched. The onset
+       skill numbers already cited in `narrative.md` as a "DECISIVE"/
+       "supersedes the old result" headline finding (r_mean=-0.293
+       [-0.516,-0.032], r_quantile=-0.131 [-0.381,+0.137], job 29436340)
+       came from this unfixed script — flagged as needing re-verification,
+       not necessarily wrong in direction (`eval_onset_skill_curve.py`
+       already does per-year processing correctly and largely agrees
+       qualitatively), but the exact numbers/CIs are not trustworthy
+       until rerun. **Fixed**: `onset_mask()` now loops `apply_hobday()`
+       and onset-detection per calendar year (matching
+       `eval_onset_skill_curve.py`'s already-correct pattern exactly),
+       `run_fold()` now also returns `years`, and `persist` now
+       invalidates any pair crossing a year boundary. Relaunched (job
+       29450811); the narrative.md "DECISIVE finding" numbers need
+       updating once it finishes.
+    3. **v1 config trap — `configs/partition/local.yaml` and
+       `remote.yaml` were leftover v1 configs whose filenames collided
+       with the current v2 directories `local/` and `remote/`.**
+       Confirmed by reading both: `split_mode: kfold` (the buggy split,
+       #1/#2), `loss_fn: MSELoss`, `learning_rate: 0.0001`,
+       `gaussian_nll: false`, no `quantile_head` key at all — a
+       different architecture generation entirely, and their own header
+       comment (`Usage: python scripts/train_partition.py --config
+       configs/partition/local.yaml ...`) actively invited running them.
+       Real risk: launching a v1 model by mistake, believing it's the
+       current v2 one, especially since `output_dir: ""` (never fixed to
+       a real path) meant these were never actually completed with a
+       checkpoint attached — nothing depended on them. **Fixed**: moved
+       (not deleted, per this repo's "keep historical record" convention,
+       known_issues.md #45) to `configs/partition/_deprecated_v1/`, with
+       a deprecation header added to each pointing at the current
+       `local/`/`remote/` directories.
+    **Verified clean** (per the user's own review, not re-derived here):
+    hyperparameters are identical across full/local/remote v2 configs
+    (lr 5e-5, tau=0.9, window...).
+
+57. **Second round of user's methodological review, Aug 21 2026, all
+    confirmed against the actual code before acting.** Ranked P1
+    (affects citable results) / P2 (small, same bug family, documented
+    not urgently fixed).
+    **P1 — IG/occlusion "population" runs sampled only the first ~1
+    calendar year of the test set, not a representative draw.**
+    `ig_partition_quantile.py`/`occlusion_ptho_bot_sanity_check.py` both
+    did `sample_idx = test_indices[:max_samples]`. `stratified_kfold`
+    builds `test_indices` by iterating time in ascending order and
+    filtering to the fold's (non-consecutive) test years -- confirmed
+    directly (fold0 test years [1985,1991,2000,2002,2005,2014,2017,
+    2018]): **299 of the first 300 samples fall in 1985 alone, 1 in
+    1991**. Every "population" IG/occlusion map produced today
+    (committed IG, land_fill IG, occlusion sanity check, both weight-swap
+    ablation directions) represents essentially one early year, not the
+    40-year test-year span. **Does NOT affect** the raw-data coastal-
+    correlation check (`raw_ptho_bot_coastal_check.py`) -- that used the
+    full contiguous 40-year record directly, no test-sample subsetting
+    at all. **Fixed**: new `src/utils/sampling.py::
+    stratified_test_sample()` (shared, not duplicated -- this project's
+    own documented anti-pattern is duplicated split/threshold logic
+    drifting apart) draws proportionally by target year, seeded
+    (reproducible). Verified on synthetic data matching fold0's exact
+    structure: 36 samples per year across all 8 test years instead of
+    299 in one. Both scripts patched to use it. **Not yet done**: rerun
+    every IG/occlusion population map with the fix -- all of today's
+    specific coastal-decay-ratio/enrichment numbers (18.76x, 12.99x,
+    13.19x, 14.34x, etc.) were computed on the single-year-biased sample
+    and need reconfirming, though the underlying physical/artifact
+    conclusion (grounded in the full-record raw-data check, unaffected)
+    likely still stands.
+    **P2-1 — NS box defined with two different lat/lon boxes across
+    modules.** Confirmed: `scripts/analysis/calibrate_mhw_area_
+    threshold.py` uses lat(51.0,62.5)/lon(-5.2,13.2); `src/utils/
+    hobday.py`'s `load_ns_p90()`/`load_ns_mean_clim_smooth_delta()` use
+    lat(50.0,63.0)/lon(-5.0,13.0) -- a real, different box. Per the
+    user's own comparison against the target series (not independently
+    re-derived here): the calibrate-style box matches the target's
+    actual box (rms 0.026°C), `hobday.py`'s box does not (rms 0.047°C).
+    Effect ~0.02°C (3% of σ) on def1's threshold and on this session's
+    own #56.1 delta fix -- small, but the two constants should be
+    unified into one source of truth. Not fixed (documentation only,
+    per the user's own severity call).
+    **P2-2 — `compute_stats()`'s "train data only" print is not quite
+    true.** Confirmed: `t_start=min(train_indices)`,
+    `t_end=max(train_indices)+window_size`, then a CONTIGUOUS slice
+    `self.data[var][t_start:t_end]` -- with `stratified_kfold`'s
+    scattered train years (e.g. fold0 train spans 1987-2024), this
+    contiguous range also includes the intercalated val/test years'
+    days sitting inside it, despite the printed message claiming
+    "train data only". Per the user's own quantification (identical
+    climatology used for the check, not independently re-derived here):
+    std -0.91%, mean +0.0014 -- negligible next to this session's other
+    fixes, but a real, documentable leak. Not fixed (would need
+    boolean-indexing over the actual `train_indices` with each index's
+    own window extension, not a single min-max slice) -- flagged for a
+    future cleanup pass, not urgent per the user's own severity call.
+    **P2-3 — CLIM (0.1°) vs DATA (0.5°) grid resolution mismatch,
+    unregridded.** Confirmed directly:
+    `clim.lat`/`clim.lon` spacing = 0.1°, `ds.lat`/`ds.lon` spacing =
+    0.5° -- a real 5x resolution difference. `load_ns_p90()` averages
+    over the NS box on CLIM's native fine grid without first regridding
+    to DATA's coarser grid, so the "NS-box mean" isn't computed at the
+    same effective spatial support the model actually sees. Per the
+    user's own measurement (not independently re-derived here): max
+    effect 0.025°C -- negligible, documentation only, no fix applied.
+
+58. **Checkpoint-directory contamination when relaunching training into
+    an existing `output_dir` — found Aug 22 2026, real risk pattern for
+    the rest of this project's retrains.** `best_ckpt()` picks the
+    lowest-val_loss `.ckpt` across the WHOLE `checkpoints/` directory,
+    with no notion of "which SLURM run produced this file." Relaunching
+    training into a directory that already has checkpoints from a
+    previous (possibly buggy/superseded) run leaves both runs' files
+    mixed together — if the old run's best val_loss happens to be lower
+    than the new run's (plausible, since val_loss isn't necessarily
+    comparable across differently-configured runs, e.g. before/after a
+    normalization fix), every future `best_ckpt()` call silently loads
+    the OLD checkpoint instead of the new one. Caught concretely twice
+    same day: `TbotAtm_full_gnll_quantile_v2_landfill_seed42_fold0`
+    (old buggy-normalization epoch=06 val_loss=0.1015 vs new correct
+    epoch=06 val_loss=0.1399 — old one would have won), and folds 1-4 /
+    local / remote directories left with orphaned epoch=0 checkpoints
+    from runs cancelled seconds after launch (normalization bug, then
+    the local/remote premature-launch incident). All identified by file
+    modification timestamp (not epoch number, which can coincide across
+    runs) and deleted. **No code fix applied** — this is a process
+    discipline issue, not a bug to patch: before relaunching training
+    into an existing `output_dir` (retry after a bug fix, rerun after
+    cancelling), clear or move aside its `checkpoints/` directory first,
+    or use a fresh `output_dir`. Worth checking any `output_dir` that
+    has been the target of more than one `sbatch` submission this
+    session before trusting its `best_ckpt()` result.
+
+59. **`AttentionGradCAM.compute()` (`src/xai/grad_cam.py`) backward()'d
+    the raw `(batch, 2)` [mean, log_var] output for `gaussian_nll=True`
+    models without selecting a column — same bug class as #49/#51's IG
+    head-conflation issue, found Aug 22 2026 while building GradCAM as
+    the session's second XAI method.** `pred = self.model(xs, xt)`
+    followed by `pred.squeeze().backward()` assumes `forward()` returns
+    a single scalar per sample — true for the plain-MSE models this
+    class predates, false for every `gaussian_nll=True` model this
+    project has actually used since (`forward()` returns `(batch, 2)`).
+    `.squeeze()` on a (1,2) tensor gives (2,), not a scalar, so
+    `.backward()` either errors or (per PyTorch's actual behavior)
+    requires an explicit gradient argument, silently mixing mean and
+    log_var gradients if one were supplied naively — the same "never
+    average heads" mistake already fixed for IG. **Fixed**: added a
+    `head: str = "mean"` parameter to `AttentionGradCAM.__init__` —
+    `"mean"` selects `forward()`'s column 0 for `gaussian_nll=True`
+    models (falls through unchanged to the original `self.model(xs,xt)`
+    call for non-gaussian_nll/MSE models, preserving old behavior
+    exactly), `"quantile"` uses `forward_with_quantile()`'s `q_pred`.
+    Verified backward-compatible: all 4 existing callers
+    (`scripts/gradcam_partition.py`, `scripts/run_xai.py`,
+    `archive/poster_egu2026/poster_gradcam{,_compare}.py`) construct
+    `AttentionGradCAM(lm)` with no `head` arg and predate `gaussian_nll`
+    models, so they're unaffected. New script
+    `scripts/gradcam_quantile_partition.py` computes both heads
+    separately using the fixed class, matching `ig_partition_quantile.
+    py`'s conventions (stratified sampling, land-mask plotting).
+
+60. **`scripts/eval_event_detection.py` had the same local/remote
+    masking bug already fixed in `eval_recall_v2_partition.py`
+    (#56.3-adjacent), found Aug 24 2026 while generalizing the script
+    across the lead-time sweep for the event-detection figure the user
+    called "quiza el principal resultado del paper."** `run_fold()`
+    calls `lm.model.forward_with_quantile(xs, xt)` directly, bypassing
+    `CNNLightningModule`'s `training_step`/`validation_step`/
+    `test_step` — but masking for the local/remote partition experiments
+    is applied only in `train_partition.py`'s
+    `LocalOnlyLightningModule`/`RemoteOnlyLightningModule`, which
+    override exactly those step methods, not `forward()`/
+    `forward_with_quantile()` themselves. Evaluating the local/remote
+    checkpoints via direct `forward_with_quantile()` calls (as this
+    script always did) fed them unmasked, out-of-distribution input —
+    would have silently produced wrong POD/FAR/CSI numbers for the
+    local/remote families specifically (full_lead7/lead3/5/14/30 were
+    unaffected, since `mode="full"` is a no-op mask). **Fixed**: added
+    `--mode {full,local_only,remote_only}` (default `full`) and a
+    `MASK_FNS` dict imported from `src/data/masking.py`, applied to
+    `xs` right before the forward pass — identical pattern and identical
+    source-of-truth mask functions as `eval_recall_v2_partition.py`.
+    Caught before launch (not after) by tracing through
+    `train_partition.py` while writing the SLURM array job
+    (`scripts/slurm/submit_event_detection_all_families.sh`,
+    job 29526761, 7 families × 5 folds), because the recall_v2 script's
+    docstring already flagged this exact failure mode for this exact
+    checkpoint type — a case for grepping sibling eval scripts for
+    "mask" before trusting a new script's local/remote numbers.
+
+61. **Spatial pipeline (`src_spatial/`): never migrated from JUWELS to
+    Raven before Aug 24 2026 — `src_spatial/dataset_spatial.py:20`
+    hardcoded `DATA_FILE = "/p/project1/hai_1127/..."`, and
+    `configs/spatial/TbotAtm_fold0.yaml`'s `output_dir` was likewise a
+    JUWELS path.** Found via a 3-agent audit (data/split, model/eval,
+    Raven-migration readiness) requested by the user before any spatial
+    launch. `configs/spatial/*.yaml`'s `data_dir` field was already
+    present but dead — nothing in `src_spatial`/`scripts_spatial` ever
+    read it; `dataset_spatial.py` used its own hardcoded constant
+    instead, so editing the YAML alone would have silently done nothing.
+    **Fixed**: `SpatialDataset.__init__` now reads `config["data_dir"]`
+    directly (matches the scalar pipeline's actual `LazyDataModule`/
+    `LazyDataset` convention — those also read `data_dir` straight from
+    the resolved YAML, not an env var). `TbotAtm_fold0.yaml` repointed to
+    `/raven/u/cradin/data/merged_daily.nc` /
+    `/raven/u/cradin/exprecursors/experiments/spatial/runs/...`.
+    `configs/spatial/TbotAtm_fold1.yaml` did not exist at all (only
+    fold0 configs existed for any spatial variable set) — created as a
+    fold0 copy with `fold: 1` and a distinct `output_dir`.
+    `scripts_spatial/eval/mhw_onset_skill.py`,
+    `persistence_baseline_spatial.py`, and
+    `preprocessing/compute_mld_weights.py` still have their own hardcoded
+    JUWELS paths, unfixed — not needed for tonight's plain-model 2-fold
+    training launch, since none of those scripts run tonight.
+
+62. **`train_spatial.py::build_splits()`'s val-year shuffle used
+    `rng(seed)` alone, independent of `fold` — same bug class as #1/#42's
+    `kfold` `val_years` collision, found Aug 24 2026 by the spatial
+    data/split audit while scoping tonight's 2-fold launch.** `remaining`
+    (the post-test-split year pool handed to the val shuffle) shares
+    `n_folds-2` of its `n_folds-1` year-blocks between any two folds —
+    reshuffling it with the *same* seed across folds produced
+    near-identical `val_years` sets. Measured directly on real 1985-2024
+    data before the fix: fold0/fold1 val_years overlapped 83%, fold1/
+    fold2 100%. This would have undermined the intended independence of
+    tonight's "launch 2 folds for more info" plan — fold0 and fold1's
+    early-stopping/checkpoint-selection would have been driven by nearly
+    the same validation years. Test-year partition itself was already
+    confirmed clean (verified zero pairwise overlap, full coverage) —
+    only `val_years` was affected. **Fixed**: seed changed to
+    `seed + fold`. **Verified directly post-fix**: fold0
+    val_years=[1990,1999,2004,2015,2016,2021], fold1
+    val_years=[1987,1992,1997,2002,2012,2020] — zero overlap.
+
+63. **`dataset_spatial.py::compute_stats()` masked every input variable
+    to the SST ocean mask uniformly, but `__getitem__` only spatially
+    masks `ptho_bot` (to `land_mask_tbottom`) and never masks the ERA5
+    variables at all (u10/v10/msl/ssr aren't in `ocean_variables` for
+    the TbotAtm config) — found Aug 24 2026 by the spatial data/split
+    audit, same failure family as #55 (a `__getitem__`/`compute_stats()`
+    scope mismatch).** The model sees ERA5 variables' full-domain
+    (land+ocean) values every timestep via `__getitem__`, but their
+    normalization mean/std were computed ocean-only via `compute_stats()`.
+    Measured directly on real data: land-region wind variance ≈50% of
+    ocean-region variance, so u10/v10/msl/ssr's stds were inflated
+    ~16-17% relative to the correct full-domain values (e.g. u10
+    ocean-only std=4.469 vs full-domain 3.842) — every land pixel's
+    normalized ERA5 input was silently attenuated by a std too large,
+    every timestep, on every run to date (no real Raven training runs
+    existed before this fix, so nothing needs to be retroactively
+    redone — but it would have biased whatever trained tonight if left
+    unfixed). **Fixed**: `compute_stats()` now mirrors `__getitem__`'s
+    exact per-variable masking (tbottom mask for `ptho_bot`, SST ocean
+    mask for other `ocean_variables`, full domain — no spatial mask, only
+    NaN exclusion — for everything else). Verified post-fix stds
+    (u10=3.855, v10=3.749, msl=750.9, ssr=8.586) closely match the
+    audit's independently measured full-domain values.
+
+64. **`scripts_spatial/eval/mhw_onset_skill.py` uses `tgt>0`/`to_t>0` as
+    an MHW proxy instead of proper per-pixel Hobday p90(DOY)+persistence
+    — every onset/mid-event spatial map this script has ever produced is
+    invalid** (carried over from the Aug 16-17 2026 audit as NF-S-5,
+    re-confirmed unchanged Aug 24 2026 by the spatial model/eval audit,
+    line numbers shifted slightly to 129-130). **Not fixed yet** — a
+    full fix has been designed but deliberately not implemented tonight
+    (real design/testing effort, and the script hardcodes `N_FOLDS=5` so
+    it cannot run meaningfully against fewer trained folds regardless).
+    Fix design: regrid `sst_climatology_doy.nc`'s `p90_thresh` (365,700,
+    1000 native grid) onto the spatial model's coarser/offset grid (141,
+    201) via `xr.interp(lat=lat, lon=lon, method="linear",
+    kwargs={"fill_value":"extrapolate"})` — the same pattern already
+    used in `scripts/mhw_hobday_stats.py` and
+    `scripts/analysis/calibrate_mhw_area_threshold.py` — then run the
+    existing scalar `apply_hobday()` per ocean pixel on the FULL
+    contiguous 14,600-day record (never on a fold's non-consecutive test
+    years concatenated together, which would reintroduce #53's bug
+    class), once, before any fold-subsetting. Benchmarked directly
+    against real data: ~4.05ms/pixel x 18,296 ocean pixels ≈ 74s one-time
+    CPU cost; post-fix mean MHW fraction on a sample measured at 12.55%,
+    much closer to Hobday's expected ~10% than the buggy 31.5% — a
+    strong directional sanity check the fix design is correct. Do not
+    trust or regenerate any spatial onset-skill figure until this lands
+    AND all 5 folds exist.
+
+65. **`stratified_kfold` has no purge/embargo buffer around Dec31->Jan1
+    year-calendar boundaries, so a real MHW event that straddles two
+    calendar years can have one half in train/val and the other half in
+    test -- found Aug 24 2026 during meeting-prep narrative review, not
+    a #53-class bug (window construction itself is correct, see below).**
+    `stratified_kfold` assigns whole calendar years to train/val/test
+    buckets (`src/data/datamodule.py:207-270`, ranks years by MHW-day
+    count then deals round-robin into 5 buckets), which prevents leakage
+    *within* a year but does nothing about the boundary *between* two
+    years landing in different buckets. Quantified directly against the
+    real 40-yr `area_frac_timeseries.npy` (def2, area>=5%): of the 39
+    possible Dec31->Jan1 transitions (1985->86 ... 2023->24), **17 (44%)**
+    have a genuine MHW event active on both sides (recent years
+    especially -- 2018 through 2024 form one unbroken chain of
+    straddling events, consistent with the warming trend). Cross-checked
+    against `full_gnll_quantile_v2_landfill`'s actual fold assignments:
+    **4-8 of these real straddling boundaries per fold land on a
+    train/val<->test split boundary** (i.e. one side of a real event is a
+    test year, the other side is a differently-labelled year) -- a
+    genuine, verified leakage risk, not a hypothetical one.
+
+    **Explicitly verified this is NOT data corruption**: `LazyDataset`
+    (`src/data/dataset.py`) wraps the single contiguous 14,600-day
+    global array; `__getitem__`'s window is `range(idx, idx +
+    window_size)` directly on that array (line ~441), and
+    `train_indices`/`val_indices`/`test_indices` are just index sets
+    into that same shared space (`dataset.py:405`, `:414-415`) -- never
+    a per-split reconstructed/concatenated array. Every window the LSTM
+    ever sees is real, calendar-contiguous days; a January test
+    window's preceding December is always the true immediately-prior
+    December, never an unrelated year's. The actual risk is information
+    overlap (a test window's real input context can include days whose
+    values were also used as training targets/context in an adjacent
+    differently-labelled year), not scrambled/mismatched input.
+
+    **Two candidate fixes evaluated, one rejected with numbers:**
+    (a) *Purge/embargo* (~10-15 days of training data dropped around each
+    contaminated boundary) -- cheap (a few hundred windows out of
+    14,600+ days), does not change which years go in which bucket, keeps
+    the existing MHW-day balance across folds (currently 1.28x
+    max/min). **Recommended.**
+    (b) *Constrain bucket assignment* so years sharing a real
+    straddling event can never be split into different buckets --
+    **rejected**: unions the 17 boundary pairs into connected chains via
+    union-find and the years 2018-2024 turn out to be one inseparable
+    7-year chain (near-continuous MHW), which any reasonable bin-packing
+    forces into a single bucket. Balancing by year-count degrades
+    MHW-day balance from 1.28x to **2.79x** (641 vs 1787 days,
+    max/min); balancing by MHW-days directly improves the ratio only to
+    2.04x at the cost of bucket sizes ranging 5-11 years (breaks the
+    clean 24/8/8 train/val/test proportions). Fixing the leakage this
+    way would materially un-fix the stratification the split was
+    designed to provide -- not a free trade.
+
+    **Not fixed yet.** Before implementing (a), a cheap post-hoc check
+    was launched (no GPU, no retraining) comparing `full_gnll_quantile_v2
+    _landfill`'s pooled def2 quantile-head recall on the "contaminated"
+    test years (the 4-8/fold above) vs the "clean" ones
+    (`scripts/analysis/contaminated_vs_clean_years_recall.py`, job
+    29564521) -- if there's no real recall difference, this becomes a
+    documented paper limitation rather than something requiring
+    retraining; if there is one, (a) needs implementing and, at minimum,
+    the committed `full_gnll_quantile_v2_landfill` 5-fold family needs
+    retraining (the wider 34-job ablation batch — architecture/seed/
+    lead-time sweeps — answers separate questions and is lower priority
+    to redo unless the effect turns out to be large).
+
+    **Result (job 29564521, completed Aug 24 2026): a real, non-trivial
+    gap -- contaminated-year recall=44.8% (n_extreme=4269) vs clean-year
+    recall=30.0% (n_extreme=1028), all-years pooled=41.9% (n=5297),
+    delta=+14.8pp.** Directionally consistent with leakage (higher
+    recall exactly where information overlap is possible), but **NOT
+    yet attributable to leakage** -- a real, undismissed confound: a
+    year sharing a real Dec31->Jan1 straddling event is close to
+    definitionally a year with a longer/more persistent MHW event than
+    one fully contained in a calendar year, and longer events are
+    plausibly easier for any model to detect regardless of any leakage
+    mechanism. Decisive follow-up designed but deliberately NOT run
+    (user's explicit call, Aug 24 2026, out of time before the meeting):
+    bin recall by each sample's distance from the nearest Dec31/Jan1
+    seam within its own (contaminated) year -- window_size=60 +
+    lead_time=7 means a target's input window can only physically reach
+    into the neighbouring year for targets within the first ~67 days of
+    January (or the analogous end-of-year cutoff), so real leakage
+    predicts the recall bump concentrated there, while the
+    event-duration confound predicts it spread evenly across the whole
+    contaminated year. Needs `contaminated_vs_clean_years_recall.py`
+    extended to save each sample's actual date (only `years` was saved
+    this run, not day-of-year) before it can be run. **Explicitly
+    deferred, not abandoned** -- revisit before treating either the
+    +14.8pp number or the leakage explanation as settled for the paper.
+
+66. **`window_size=60` has no documented rationale and was never
+    ablated -- found Aug 24 2026 during meeting-prep narrative review.**
+    Every config in the entire project (`grep -rh "^window_size:"
+    configs/`) uses exactly 60, with no other value ever tried anywhere
+    -- no sweep, no ablation experiment, unlike layers/dropout which
+    were explored. `docs/narrative.md` has a placeholder section ("##
+    Window size and lead time") with the TODO comment "Why 60-day window
+    (link to ACF / tau_ns)" that was never filled in -- the intent to
+    document this existed but the writeup was never done. **Do not state
+    in the paper or the meeting that 60 days was empirically chosen** --
+    it wasn't; it's an inherited/fixed design choice.
+
+    The candidate post-hoc justification via [[project-ns-decorrelation-
+    stratification]]'s tau finding (NS SST decorrelation timescale ~149d
+    in 1985-1994 collapsing to ~34-37d in 2015-2024) is tempting but
+    **not usable as-is**: that tau analysis (a) was reported by the user,
+    not independently verified against raw data by any session yet (per
+    [[feedback-verify-against-raw-data]]), and (b) postdates the
+    window_size=60 choice chronologically, so it cannot be the actual
+    reason 60 was picked, only a possible retroactive rationalization
+    worth investigating properly (would suggest 60 is reasonable for the
+    2015-2024 era but undersized for capturing 1985-2014's longer
+    memory). If picked up later: verify tau against raw `merged_daily.nc`
+    first, then decide whether a window_size ablation is worth running.
