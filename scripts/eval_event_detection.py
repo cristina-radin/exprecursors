@@ -67,7 +67,7 @@ from torch.utils.data import DataLoader
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import argparse
+import argparse  # noqa: E402
 
 from src.data.datamodule import LazyDataModule  # noqa: E402
 from src.data.masking import mask_local, mask_remote  # noqa: E402
@@ -484,7 +484,7 @@ out_path = OUT_DIR / f"event_detection_pod_far_csi_{LABEL}.png"
 plt.savefig(out_path, dpi=150, bbox_inches="tight")
 print(f"\nSaved {out_path}", flush=True)
 
-import json
+import json  # noqa: E402
 
 with open(OUT_DIR / f"event_detection_summary_{LABEL}.json", "w") as f:
     json.dump(

@@ -48,7 +48,7 @@ from torch.utils.data import DataLoader
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import argparse
+import argparse  # noqa: E402
 
 from src.data.datamodule import LazyDataModule  # noqa: E402
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel  # noqa: E402

@@ -89,9 +89,6 @@ def main():
     )
     lm.eval().to(device)
 
-    variables = cfg["variables"]
-    n_vars = len(variables)
-
     sample_idx = stratified_test_sample(test_indices, full_ds, args.max_samples)
     print(
         f"Running GradCAM on {len(sample_idx)} samples (stratified by year, out of {len(test_indices)})",
@@ -137,7 +134,6 @@ def main():
     land_mask_tbottom = (
         nc["land_mask_tbottom"].values if "land_mask_tbottom" in nc else None
     )
-    ocean_variables = set(cfg.get("ocean_variables", []))
     # GradCAM's map is variable-agnostic (shared across all input
     # channels) -- grey out land only if ptho_bot is the sole ocean
     # variable and thus the map is "mostly about" ocean+atmosphere mixed;

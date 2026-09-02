@@ -115,10 +115,7 @@ def main():
     import xarray as xr
 
     nc = xr.open_dataset(DATA_FILE)
-    lats = nc.lat.values
-    lons = nc.lon.values
     land_mask_tbottom = nc["land_mask_tbottom"].values  # 1=ocean
-    land_mask = nc["land_mask"].values if "land_mask" in nc else None
     nc.close()
 
     is_ocean = land_mask_tbottom == 1

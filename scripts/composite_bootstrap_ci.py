@@ -66,7 +66,6 @@ def main():
     lons = ds.lon.values
 
     target = ds["target"].values.astype(np.float64)
-    n = len(target)
 
     p90 = load_ns_p90()
     doy_idx = np.clip(doys, 1, 365) - 1

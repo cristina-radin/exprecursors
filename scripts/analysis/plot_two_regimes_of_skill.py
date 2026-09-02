@@ -47,8 +47,8 @@ model_r_mean = dict(zip(model_leads, sweep["model_r_mean"]))
 persist_lags = list(sweep["persist_lags"])
 persist_r_by_lag = dict(zip(persist_lags, sweep["persist_r"]))
 
-r_model = [model_r_mean[l] for l in LEADS]
-r_persist = [persist_r_by_lag[l] for l in LEADS]
+r_model = [model_r_mean[ld] for ld in LEADS]
+r_persist = [persist_r_by_lag[ld] for ld in LEADS]
 
 # ---- Panel B data: POD sustained_full, parse from real SLURM logs ----
 LOG_BY_LEAD = {
@@ -104,7 +104,7 @@ axA.plot(
 )
 axA.plot(x, r_persist, "o-", color=COL_PERSIST, lw=2, markersize=7, label="Persistence")
 axA.set_xticks(x)
-axA.set_xticklabels([f"{l}d" for l in LEADS])
+axA.set_xticklabels([f"{ld}d" for ld in LEADS])
 axA.set_ylabel("Pooled r (point forecast)")
 axA.set_title(
     "A. Continuous tracking skill", fontsize=13, fontweight="bold", loc="left"
@@ -129,7 +129,7 @@ axB.plot(
     x, pod_persist, "o-", color=COL_PERSIST, lw=2, markersize=7, label="Persistence"
 )
 axB.set_xticks(x)
-axB.set_xticklabels([f"{l}d" for l in LEADS])
+axB.set_xticklabels([f"{ld}d" for ld in LEADS])
 axB.set_ylabel("POD (sustained_full, event-level)")
 axB.set_title(
     "B. Sustained event detection", fontsize=13, fontweight="bold", loc="left"

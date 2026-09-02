@@ -30,12 +30,12 @@ import xarray as xr
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.eval_recall_v2_partition import (
+from scripts.eval_recall_v2_partition import (  # noqa: E402
     AREA_FRAC_THRESHOLD,
     FIGURES_DIR,
     MASK_FNS,
     run_fold,
-)  # noqa: E402
+)
 from src.utils.hobday import load_ns_p90  # noqa: E402
 from src.utils.paths import DATA_FILE  # noqa: E402
 

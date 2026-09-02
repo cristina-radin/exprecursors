@@ -61,7 +61,7 @@ def main():
     means = [np.mean(shares[v]) for v in order]
     stds = [np.std(shares[v]) for v in order]
     colors = [COLOR_STABLE if v == "u10" else COLOR_OTHER for v in order]
-    bars = ax_bar.bar(
+    ax_bar.bar(
         x, means, yerr=stds, capsize=4, color=colors, edgecolor="white", linewidth=0.5
     )
     for xi, v, m, s in zip(x, order, means, stds):
@@ -131,9 +131,7 @@ def main():
         )
         ax.set_xticks([])
         ax.set_yticks([])
-    cbar = fig.colorbar(
-        im, ax=ax_maps, shrink=0.85, pad=0.02, label="mean signed diff IG"
-    )
+    fig.colorbar(im, ax=ax_maps, shrink=0.85, pad=0.02, label="mean signed diff IG")
     fig.text(
         0.5,
         0.485,

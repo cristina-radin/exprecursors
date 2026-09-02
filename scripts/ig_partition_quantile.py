@@ -49,14 +49,13 @@ import torch
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.eval_recall_v2_partition import (
+from scripts.eval_recall_v2_partition import (  # noqa: E402
     AREA_FRAC_THRESHOLD,
     FIGURES_DIR,
-)  # noqa: E402
+)
 from src.data.datamodule import LazyDataModule  # noqa: E402
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel  # noqa: E402
 from src.utils.checkpoints import best_ckpt, load_model_config  # noqa: E402
-from src.utils.hobday import load_ns_p90  # noqa: E402
 from src.utils.paths import DATA_FILE  # noqa: E402
 from src.utils.sampling import stratified_test_sample  # noqa: E402
 
@@ -235,7 +234,6 @@ def main():
 
     conditions = ["mhw", "nonmhw"] if args.stratify_mhw else ["all"]
     if args.stratify_mhw:
-        p90 = load_ns_p90()
         area_frac = np.load(FIGURES_DIR / "area_frac_timeseries.npy")
         print(
             f"Stratifying by def2 ground truth (area_frac >= {AREA_FRAC_THRESHOLD})",
