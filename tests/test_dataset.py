@@ -20,7 +20,7 @@ TRAIN_IDX = list(range(0, 1500))
 
 
 def _dataset(tmp_path, data_file=syn.DATA_FILE, **overrides):
-    cfg = syn.write_config(tmp_path, data_dir=str(data_file), **overrides)
+    cfg = syn.write_config(tmp_path, **overrides)
     return LazyDataset(str(data_file), config_path=cfg)
 
 

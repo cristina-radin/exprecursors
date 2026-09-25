@@ -105,7 +105,6 @@ _build_clim_file(CLIM_FILE)
 def write_config(directory: Path, name: str = "cfg.yaml", **overrides) -> str:
     """Write a minimal training-style yaml (defaults match the synthetic grid)."""
     cfg = dict(
-        data_dir=str(DATA_FILE),
         variables=VARIABLES,
         ocean_variables=["ptho_bot"],
         window_size=WINDOW,

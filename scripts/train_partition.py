@@ -32,6 +32,7 @@ from src.data.datamodule import LazyDataModule
 from src.data.masking import mask_local, mask_remote
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 from src.utils.checkpoints import save_model_config
+from src.utils.paths import EXPERIMENTS_DIR
 from src.utils.hobday import load_ns_p90
 
 # ── Remote-only: zero everything INSIDE NS box ───────────────────────────────
@@ -135,7 +136,7 @@ def main():
     pl.seed_everything(config["seed"])
     torch.set_float32_matmul_precision("medium")
 
-    output_dir = Path(config["output_dir"])
+    output_dir = EXPERIMENTS_DIR / "partition" / config["run_name"]
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Mandatory output (plan rule, Aug 20 2026: "sacar las configs reales

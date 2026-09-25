@@ -33,6 +33,8 @@ import pytorch_lightning as pl
 import yaml
 from torch.utils.data import DataLoader, Subset
 
+from src.utils.paths import DATA_FILE
+
 from .dataset import LazyDataset
 
 
@@ -87,7 +89,7 @@ class LazyDataModule(pl.LightningDataModule):
         with open(config_path, "r") as f:
             self.config = yaml.safe_load(f)
 
-        self.data_dir = self.config["data_dir"]
+        self.data_dir = str(DATA_FILE)  # $MHW_DATA_FILE
         self.batch_size = self.config["batch_size"]
         self.num_workers = self.config["num_workers"]
         self.seed = self.config["seed"]
