@@ -1,0 +1,33 @@
+image: python:3.12-slim
+
+stages:
+  - lint
+  - test
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  key:
+    files:
+      - requirements.txt
+  paths:
+    - .cache/pip
+
+lint:
+  stage: lint
+  before_script:
+    - pip install pre-commit
+  script:
+    - pre-commit run --all-files
+
+test:
+  stage: test
+  before_script:
+    - pip install -r requirements.txt
+  script:
+    # Only test_splits.py and test_masking.py run here: both use synthetic data
+    # and need no external files (see their docstrings). test_checkpoints.py
+    # requires $MHW_DATA_FILE, which shared GitLab runners don't have access to —
+    # it stays out of CI until a self-hosted runner with data access is registered.
+    - pytest tests/test_splits.py tests/test_masking.py -v
