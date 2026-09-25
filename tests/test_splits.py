@@ -71,3 +71,9 @@ def test_val_years_differ_per_fold(folds):
 
 def test_split_is_deterministic(tmp_path, folds):
     assert _fold_years(_setup(tmp_path, 2)) == folds[2]
+
+
+def test_data_dir_key_is_rejected(tmp_path):
+    cfg = syn.write_config(tmp_path, data_dir=str(syn.DATA_FILE))
+    with pytest.raises(ValueError, match="MHW_DATA_FILE"):
+        LazyDataModule(config_path=cfg)

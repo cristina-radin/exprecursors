@@ -89,6 +89,11 @@ class LazyDataModule(pl.LightningDataModule):
         with open(config_path, "r") as f:
             self.config = yaml.safe_load(f)
 
+        if "data_dir" in self.config:
+            raise ValueError(
+                "'data_dir' in the config is not read: the data file comes from "
+                "$MHW_DATA_FILE. Remove the key from the yaml."
+            )
         self.data_dir = str(DATA_FILE)  # $MHW_DATA_FILE
         self.batch_size = self.config["batch_size"]
         self.num_workers = self.config["num_workers"]
