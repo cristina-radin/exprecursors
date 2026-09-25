@@ -6,6 +6,10 @@ stages:
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  # Dummy values: src/utils/paths.py requires these to be non-empty at import
+  # time, but neither test actually reads the files they point to.
+  MHW_DATA_FILE: "/dummy/merged_daily.nc"
+  MHW_CLIM_FILE: "/dummy/sst_climatology_doy.nc"
 
 cache:
   key:
