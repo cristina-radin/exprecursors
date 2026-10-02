@@ -52,9 +52,6 @@ class LazyDataset(Dataset):
         self.normalize = config.get("normalize", True)
         self.window_size = config.get("window_size", 60)
         self.lead_time = config.get("lead_time", 7)
-        self.clim_ref_start = config.get("clim_ref_start", 1985)
-        self.clim_ref_end = config.get("clim_ref_end", 2014)
-        self.clim_window = config.get("clim_window", 5)
         self.detrend_variables = set(config.get("detrend_variables", []))
         self.detrend_target = config.get("detrend_target", False)
         # Opt-in: __getitem__ returns a 4-tuple (..., target_doy) instead of
@@ -210,56 +207,6 @@ class LazyDataset(Dataset):
         self.target_std = 1.0
 
     # ------------------------------------------------------------------
-    # Climatology
-    # ------------------------------------------------------------------
-
-    def _compute_clim(self) -> None:
-        """
-        No-op: every variable in merged_daily.nc is already a day-of-year
-        anomaly, computed upstream in preprocess_all.py (see docs/data.md).
-        self.clim_means is left empty, so __getitem__ and compute_stats()
-        skip the climatology-subtraction branch entirely.
-
-        Kept as a method (rather than deleted outright) so a future dataset
-        file that ships absolute values can restore per-variable climatology
-        by populating vars_to_anom again.
-        """
-        vars_to_anom = []
-        if not vars_to_anom:
-            return
-
-        ref_mask = (self.years >= self.clim_ref_start) & (
-            self.years <= self.clim_ref_end
-        )
-        ref_doys = self.doys[ref_mask].copy()
-        ref_doys[ref_doys == 366] = 365  # map leap days → Dec 31
-
-        half_w = self.clim_window // 2
-
-        print(
-            f"\nComputing day-of-year climatology "
-            f"({self.clim_ref_start}-{self.clim_ref_end}, "
-            f"window={self.clim_window})..."
-        )
-
-        for var in vars_to_anom:
-            ref_data = self.data[var][ref_mask].numpy()  # (n_ref, lat, lon)
-            clim = np.zeros(
-                (365, ref_data.shape[1], ref_data.shape[2]), dtype=np.float32
-            )
-
-            for d in range(1, 366):
-                window_doys = np.array(
-                    [((d - 1 + off) % 365) + 1 for off in range(-half_w, half_w + 1)]
-                )
-                mask = np.isin(ref_doys, window_doys)
-                if mask.any():
-                    clim[d - 1] = ref_data[mask].mean(axis=0)
-
-            self.clim_means[var] = torch.tensor(clim, dtype=torch.float32)
-            print(f"  {var}: clim mean={clim.mean():.4f}, std={clim.std():.4f}")
-
-    # ------------------------------------------------------------------
     # Linear detrending (pixel-wise, full period)
     # ------------------------------------------------------------------
 
@@ -332,8 +279,6 @@ class LazyDataset(Dataset):
         """
         train_indices = list(train_indices)
 
-        # Step 1 — climatology (reference period, independent of split)
-        self._compute_clim()
         self._compute_trend()
 
         # Step 2 — mean/std on training time span
