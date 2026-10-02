@@ -17,7 +17,6 @@ quantile_head: true
 quantile_tau: 0.9
 quantile_weight: 0.3
 hobday_smooth_target: true
-temporal_features: 0
 split_mode: stratified_kfold
 n_folds: 5
 fold: 0

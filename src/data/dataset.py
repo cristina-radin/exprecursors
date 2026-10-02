@@ -43,12 +43,8 @@ class LazyDataset(Dataset):
 
         self.ds = xr.open_mfdataset(file_name, parallel=True, engine="netcdf4")
 
-        # Temporal coordinates
         self.years = self.ds.time.dt.year.values
-        self.months = self.ds.time.dt.month.values
-        self.doys = self.ds.time.dt.dayofyear.values  # 1–366
-        self.year_min = self.years.min()
-        self.year_max = self.years.max()
+        self.doys = self.ds.time.dt.dayofyear.values  # 1-366
 
         # ptho_bot uses land_mask_tbottom, not land_mask: the two masks
         # disagree on which pixels are land.
@@ -218,10 +214,9 @@ class LazyDataset(Dataset):
 
     def __getitem__(self, idx: int):
         """
-        Returns (x_spatial, x_temporal, y):
-            x_spatial:  (window_size, n_vars, lat, lon) — anomalised + normalised
-            x_temporal: (window_size, 3)                — year_norm, month_sin, month_cos
-            y:          (1,)                            — normalised North Sea SST anomaly
+        Returns (x_spatial, y):
+            x_spatial: (window_size, n_vars, lat, lon) — anomalised + normalised
+            y:         (1,)                            — normalised North Sea SST anomaly
         """
         if self.target_mean is None or self.target_std is None:
             raise RuntimeError(
@@ -235,7 +230,6 @@ class LazyDataset(Dataset):
             )
 
         window_spatial = []
-        window_temporal = []
 
         for t in range(idx, idx + self.window_size):
             # --- Spatial frame ---
@@ -257,23 +251,12 @@ class LazyDataset(Dataset):
             frame = torch.nan_to_num(frame, nan=0.0)
             window_spatial.append(frame)
 
-            # --- Temporal features ---
-            year_norm = (self.years[t] - self.year_min) / (
-                self.year_max - self.year_min
-            )
-            month_sin = np.sin(2 * np.pi * self.months[t] / 12)
-            month_cos = np.cos(2 * np.pi * self.months[t] / 12)
-            window_temporal.append(
-                torch.tensor([year_norm, month_sin, month_cos], dtype=torch.float32)
-            )
-
         x_spatial = torch.stack(
             window_spatial, dim=0
         )  # (window_size, n_vars, lat, lon)
-        x_temporal = torch.stack(window_temporal, dim=0)  # (window_size, 3)
 
         target_idx = idx + self.window_size - 1 + self.lead_time
         y_raw = self.target[target_idx]
         y = ((y_raw - self.target_mean) / self.target_std).unsqueeze(0)
 
-        return x_spatial, x_temporal, y
+        return x_spatial, y

@@ -44,16 +44,16 @@ class RemoteOnlyLightningModule(CNNLightningModule):
         return mask_remote(xs)
 
     def training_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().training_step((self._mask(xs), xt, y), batch_idx)
+        xs, y = batch
+        return super().training_step((self._mask(xs), y), batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().validation_step((self._mask(xs), xt, y), batch_idx)
+        xs, y = batch
+        return super().validation_step((self._mask(xs), y), batch_idx)
 
     def test_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().test_step((self._mask(xs), xt, y), batch_idx)
+        xs, y = batch
+        return super().test_step((self._mask(xs), y), batch_idx)
 
 
 # ── Local-only: zero everything OUTSIDE NS box ───────────────────────────────
@@ -66,16 +66,16 @@ class LocalOnlyLightningModule(CNNLightningModule):
         return mask_local(xs)
 
     def training_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().training_step((self._mask(xs), xt, y), batch_idx)
+        xs, y = batch
+        return super().training_step((self._mask(xs), y), batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().validation_step((self._mask(xs), xt, y), batch_idx)
+        xs, y = batch
+        return super().validation_step((self._mask(xs), y), batch_idx)
 
     def test_step(self, batch, batch_idx):
-        xs, xt, y = batch
-        return super().test_step((self._mask(xs), xt, y), batch_idx)
+        xs, y = batch
+        return super().test_step((self._mask(xs), y), batch_idx)
 
 
 # ── Loss curve callback ───────────────────────────────────────────────────────
@@ -153,7 +153,6 @@ def main():
         cnn_features=config.get("cnn_features", 256),
         lstm_hidden=config.get("lstm_hidden", 512),
         lstm_layers=config.get("lstm_layers", 2),
-        temporal_features=config.get("temporal_features", 0),
         dropout=config.get("dropout", 0.2),
         gaussian_nll=config.get("gaussian_nll", False),
         pooling=config.get("pooling", "max"),

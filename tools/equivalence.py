@@ -45,7 +45,7 @@ SAMPLE_POSITIONS = (0, 731, 1462, 2193)  # positions inside the fold-0 test set
 SEED = 42
 # Values of the options that later simplifications remove, as used by the
 # committed model. If the yaml still carries them they must match.
-EXPECTED = dict(gaussian_nll=True, temporal_features=0)
+EXPECTED = dict(gaussian_nll=True)
 # yaml keys that legitimately differ between fold0.yaml and a run's
 # resolved_config.yaml (locations moved to environment variables).
 LOCATION_KEYS = {"data_dir", "output_dir", "run_name"}
@@ -60,6 +60,12 @@ REMOVED_INERT_KEYS = {
     # lstm_attention branches were removed, lstm_only (what this checkpoint
     # was built with) is now the only behaviour, hardcoded.
     "arch": "lstm_only",
+    # CNNLSTMModel no longer takes temporal_features: x_temporal (year_norm,
+    # month_sin, month_cos) was computed by dataset.py but never fed into
+    # the model with this value (0 => the concatenation branch in _encode()
+    # never ran); both are gone now, dataset.py's __getitem__ returns a
+    # plain (x_spatial, y) pair.
+    "temporal_features": 0,
     # dataset.py's _compute_clim() returned immediately (vars_to_anom = [])
     # because every variable in merged_daily.nc already arrives anomalised --
     # clim_ref_start only bounded the reference period for that dead branch.
@@ -206,10 +212,9 @@ def compute(dm, cfg, ckpt_sha, ckpt):
     subset = dm.test_dataset
     batch = default_collate([subset[p] for p in SAMPLE_POSITIONS])
     xs = batch[0]
-    fwd_args = (xs, batch[1]) if "x_temporal" in inspect.signature(model.forward).parameters else (xs,)
 
     with torch.no_grad():
-        y_hat, q_pred = model.forward_with_quantile(*fwd_args)
+        y_hat, q_pred = model.forward_with_quantile(xs)
         loss, pred, y = module._step(batch, "val")
 
     full_ds = subset.dataset

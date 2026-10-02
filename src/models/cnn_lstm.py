@@ -5,7 +5,7 @@ Architecture:
   1. CNN encoder: each spatial frame (n_vars, lat, lon) → feature vector
   2. LSTM:        sequence of feature vectors (window_size,) → hidden state
                   (last timestep is used)
-  3. FC head:     [hidden state + temporal_features] → scalar prediction
+  3. FC head:     hidden state → scalar prediction
 """
 
 import math
@@ -102,14 +102,13 @@ class CNNLSTMModel(nn.Module):
     CNN-LSTM for regression.
 
     Args:
-        in_channels:     number of spatial input variables
-        cnn_features:    CNN encoder output size
-        lstm_hidden:     LSTM hidden size
-        lstm_layers:     number of LSTM layers
-        temporal_features: number of temporal scalar features (year, sin, cos = 3)
-        dropout:         dropout in LSTM
-        pooling:         "max" (default) or "avg" — see CNNEncoder docstring
-        padding_mode:    "zeros" (default) or "reflect" — see CNNEncoder docstring
+        in_channels:  number of spatial input variables
+        cnn_features: CNN encoder output size
+        lstm_hidden:  LSTM hidden size
+        lstm_layers:  number of LSTM layers
+        dropout:      dropout in LSTM
+        pooling:      "max" (default) or "avg" — see CNNEncoder docstring
+        padding_mode: "zeros" (default) or "reflect" — see CNNEncoder docstring
     """
 
     def __init__(
@@ -118,7 +117,6 @@ class CNNLSTMModel(nn.Module):
         cnn_features: int = 128,
         lstm_hidden: int = 256,
         lstm_layers: int = 2,
-        temporal_features: int = 3,
         dropout: float = 0.3,
         gaussian_nll: bool = False,
         pooling: str = "max",
@@ -127,7 +125,6 @@ class CNNLSTMModel(nn.Module):
     ):
         super().__init__()
 
-        self.temporal_features = temporal_features
         self.gaussian_nll = gaussian_nll
         self.pooling = pooling
         self.padding_mode = padding_mode
@@ -148,11 +145,11 @@ class CNNLSTMModel(nn.Module):
         )
         context_dim = lstm_hidden
 
-        # FC head: last LSTM timestep (+ temporal features if any) →
-        # [mean, log_var] if gaussian_nll else [mean] only.
+        # FC head: last LSTM timestep → [mean, log_var] if gaussian_nll
+        # else [mean] only.
         out_dim = 2 if gaussian_nll else 1
         self.fc = nn.Sequential(
-            nn.Linear(context_dim + temporal_features, 64),
+            nn.Linear(context_dim, 64),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(64, out_dim),
@@ -169,29 +166,24 @@ class CNNLSTMModel(nn.Module):
         # `pred_quantile`, never `p90`/`q90`, in any downstream eval code.
         if quantile_head:
             self.quantile_head = nn.Sequential(
-                nn.Linear(context_dim + temporal_features, 64),
+                nn.Linear(context_dim, 64),
                 nn.ReLU(),
                 nn.Dropout(dropout),
                 nn.Linear(64, 1),
             )
 
-    def _encode(
-        self,
-        x_spatial: torch.Tensor,
-        x_temporal: torch.Tensor,
-    ) -> torch.Tensor:
-        """Backbone: (x_spatial, x_temporal) -> combined feature vector, fed
-        into self.fc and (if enabled) self.quantile_head. Single source for
-        this computation — forward() and forward_with_quantile() both call
-        this instead of each keeping their own copy, so a future backbone
-        change (new layer, dropout, etc.) can't silently diverge between
-        the two entry points.
+    def _encode(self, x_spatial: torch.Tensor) -> torch.Tensor:
+        """Backbone: x_spatial -> feature vector, fed into self.fc and (if
+        enabled) self.quantile_head. Single source for this computation —
+        forward() and forward_with_quantile() both call this instead of
+        each keeping their own copy, so a future backbone change (new
+        layer, dropout, etc.) can't silently diverge between the two entry
+        points.
 
         Args:
-            x_spatial:  (batch, window_size, n_vars, lat, lon)
-            x_temporal: (batch, window_size, 3)
+            x_spatial: (batch, window_size, n_vars, lat, lon)
         Returns:
-            combined: (batch, context_dim [+ temporal_features])
+            combined: (batch, context_dim)
         """
         batch, window, n_vars, lat, lon = x_spatial.shape
 
@@ -201,34 +193,19 @@ class CNNLSTMModel(nn.Module):
         features = features.view(batch, window, -1)  # (batch, window, cnn_features)
 
         lstm_out, _ = self.lstm(features)  # (batch, window, lstm_hidden)
-        context = lstm_out[:, -1, :]  # last timestep
+        return lstm_out[:, -1, :]  # last timestep
 
-        if self.temporal_features > 0:
-            temporal_summary = x_temporal.mean(dim=1)
-            context = torch.cat([context, temporal_summary], dim=-1)
-
-        return context
-
-    def forward(
-        self,
-        x_spatial: torch.Tensor,
-        x_temporal: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(self, x_spatial: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x_spatial:  (batch, window_size, n_vars, lat, lon)
-            x_temporal: (batch, window_size, 3)
+            x_spatial: (batch, window_size, n_vars, lat, lon)
         Returns:
             (batch, 2) — [mean, log_var] if gaussian_nll else (batch, 1) — [mean]
         """
-        combined = self._encode(x_spatial, x_temporal)
+        combined = self._encode(x_spatial)
         return self.fc(combined)  # (batch, 1)
 
-    def forward_with_quantile(
-        self,
-        x_spatial: torch.Tensor,
-        x_temporal: torch.Tensor,
-    ):
+    def forward_with_quantile(self, x_spatial: torch.Tensor):
         """Like forward(), but also returns the auxiliary quantile head's
         output. Requires quantile_head=True at construction.
 
@@ -248,7 +225,7 @@ class CNNLSTMModel(nn.Module):
                 "forward_with_quantile() requires quantile_head=True at construction"
             )
 
-        combined = self._encode(x_spatial, x_temporal)
+        combined = self._encode(x_spatial)
         y_hat = self.fc(combined)
         q_pred = self.quantile_head(combined)
         return y_hat, q_pred
@@ -328,8 +305,8 @@ class CNNLightningModule(pl.LightningModule):
         self.test_preds = []
         self.test_targets = []
 
-    def forward(self, x_spatial, x_temporal):
-        return self.model(x_spatial.float(), x_temporal.float())
+    def forward(self, x_spatial):
+        return self.model(x_spatial.float())
 
     def _pinball_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Pinball (quantile) loss at self.quantile_tau. `pred` must be the
@@ -356,16 +333,14 @@ class CNNLightningModule(pl.LightningModule):
             return loss, mean
         return self.loss_fn(y_hat, y), y_hat
 
-    def _forward_dual(self, x_spatial, x_temporal):
+    def _forward_dual(self, x_spatial):
         """Returns (y_hat, q_pred). q_pred is None unless quantile_head=True.
         y_hat is identical either way — forward_with_quantile() recomputes
         the same self.fc(combined) as forward(), just also returns the
         independent quantile head's output alongside it."""
         if self.quantile_head:
-            return self.model.forward_with_quantile(
-                x_spatial.float(), x_temporal.float()
-            )
-        return self(x_spatial, x_temporal), None
+            return self.model.forward_with_quantile(x_spatial.float())
+        return self(x_spatial), None
 
     def _step(self, batch, split: str):
         """Shared step logic. loss = NLL(mean, log_var) [+ quantile_weight *
@@ -373,8 +348,8 @@ class CNNLightningModule(pl.LightningModule):
         depends on a disjoint parameter set (self.model.fc vs.
         self.model.quantile_head), so that sum does not blend gradients
         into either head — it only combines them at the shared backbone."""
-        x_spatial, x_temporal, y = batch
-        y_hat, q_pred = self._forward_dual(x_spatial, x_temporal)
+        x_spatial, y = batch
+        y_hat, q_pred = self._forward_dual(x_spatial)
         loss, pred = self._loss_and_pred(y_hat, y)
 
         if self.quantile_head:

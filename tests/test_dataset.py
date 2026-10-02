@@ -85,7 +85,7 @@ def test_nearest_fill_copies_nearest_ocean_pixel(tmp_path):
 def test_zero_mode_land_is_zero_in_input(tmp_path):
     ds = _dataset(tmp_path, land_fill_mode="zero")
     ds.compute_stats(TRAIN_IDX)
-    x, _, _ = ds[10]
+    x, _ = ds[10]
     i = ds.variables.index("ptho_bot")
     assert torch.all(x[:, i][:, ds.land_masks["ptho_bot"]] == 0)
 
