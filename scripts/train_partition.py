@@ -33,7 +33,6 @@ from src.data.masking import mask_local, mask_remote
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 from src.utils.checkpoints import save_model_config
 from src.utils.paths import EXPERIMENTS_DIR
-from src.utils.hobday import load_ns_p90
 
 # ── Remote-only: zero everything INSIDE NS box ───────────────────────────────
 
@@ -45,19 +44,16 @@ class RemoteOnlyLightningModule(CNNLightningModule):
         return mask_remote(xs)
 
     def training_step(self, batch, batch_idx):
-        # *rest so this works with both the standard 3-tuple batch and the
-        # 4-tuple (..., target_doy) that focal_weight=True adds — the mask
-        # only ever touches x_spatial (index 0).
-        xs, xt, y, *rest = batch
-        return super().training_step((self._mask(xs), xt, y, *rest), batch_idx)
+        xs, xt, y = batch
+        return super().training_step((self._mask(xs), xt, y), batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        xs, xt, y, *rest = batch
-        return super().validation_step((self._mask(xs), xt, y, *rest), batch_idx)
+        xs, xt, y = batch
+        return super().validation_step((self._mask(xs), xt, y), batch_idx)
 
     def test_step(self, batch, batch_idx):
-        xs, xt, y, *rest = batch
-        return super().test_step((self._mask(xs), xt, y, *rest), batch_idx)
+        xs, xt, y = batch
+        return super().test_step((self._mask(xs), xt, y), batch_idx)
 
 
 # ── Local-only: zero everything OUTSIDE NS box ───────────────────────────────
@@ -70,16 +66,16 @@ class LocalOnlyLightningModule(CNNLightningModule):
         return mask_local(xs)
 
     def training_step(self, batch, batch_idx):
-        xs, xt, y, *rest = batch
-        return super().training_step((self._mask(xs), xt, y, *rest), batch_idx)
+        xs, xt, y = batch
+        return super().training_step((self._mask(xs), xt, y), batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        xs, xt, y, *rest = batch
-        return super().validation_step((self._mask(xs), xt, y, *rest), batch_idx)
+        xs, xt, y = batch
+        return super().validation_step((self._mask(xs), xt, y), batch_idx)
 
     def test_step(self, batch, batch_idx):
-        xs, xt, y, *rest = batch
-        return super().test_step((self._mask(xs), xt, y, *rest), batch_idx)
+        xs, xt, y = batch
+        return super().test_step((self._mask(xs), xt, y), batch_idx)
 
 
 # ── Loss curve callback ───────────────────────────────────────────────────────
@@ -170,17 +166,6 @@ def main():
     # re-derive (and drift from) these defaults. See src/utils/checkpoints.py.
     save_model_config(output_dir, **model_kwargs)
 
-    focal_weight = config.get("focal_weight", False)
-    p90_by_doy = None
-    if focal_weight:
-        # NS-box-mean Hobday p90(DOY), same physical units as `target`
-        # (un-normalised North Sea SST anomaly) — see src/utils/hobday.py.
-        # Requires the config to also set return_target_doy: true so
-        # LazyDataset yields the 4-tuple _step()'s focal branch expects;
-        # if it doesn't, the mismatch fails loudly on the first training
-        # step (unpacking error), not silently.
-        p90_by_doy = torch.tensor(load_ns_p90(), dtype=torch.float32)
-
     LightningClass = MODE_MAP[args.mode]
     lightning_module = LightningClass(
         model=model,
@@ -192,9 +177,6 @@ def main():
         quantile_head=config.get("quantile_head", False),
         quantile_tau=config.get("quantile_tau", 0.0),
         quantile_weight=config.get("quantile_weight", 0.7),
-        focal_weight=focal_weight,
-        focal_alpha=config.get("focal_alpha", 1.0),
-        p90_by_doy=p90_by_doy,
         lr_scheduler=config.get("lr_scheduler", "reduce_on_plateau"),
         warmup_epochs=config.get("warmup_epochs", 5),
         cosine_t_max_epochs=config.get("cosine_t_max_epochs"),

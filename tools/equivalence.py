@@ -77,6 +77,11 @@ REMOVED_INERT_KEYS = {
     "val_ratio": 0.15,
     # see train_ratio.
     "test_ratio": 0.1,
+    # CNNLightningModule no longer takes focal_weight: the focal-weighted
+    # NLL loss, p90_by_doy, and dataset.py's return_target_doy were all
+    # removed together (owner's decision, reversible -- see
+    # docs/open_issues.md). This checkpoint was trained with it off.
+    "focal_weight": False,
 }
 
 

@@ -272,15 +272,12 @@ class CNNLightningModule(pl.LightningModule):
         quantile_head: bool = False,
         quantile_tau: float = 0.0,
         quantile_weight: float = 0.7,
-        focal_weight: bool = False,
-        focal_alpha: float = 1.0,
-        p90_by_doy: torch.Tensor = None,
         lr_scheduler: str = "reduce_on_plateau",
         warmup_epochs: int = 5,
         cosine_t_max_epochs: int = None,
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=["model", "p90_by_doy"])
+        self.save_hyperparameters(ignore=["model"])
 
         self.model = model
         self.learning_rate = learning_rate
@@ -290,8 +287,6 @@ class CNNLightningModule(pl.LightningModule):
         self.quantile_head = quantile_head
         self.quantile_tau = quantile_tau
         self.quantile_weight = quantile_weight
-        self.focal_weight = focal_weight
-        self.focal_alpha = focal_alpha
         if lr_scheduler not in ("reduce_on_plateau", "cosine"):
             raise ValueError(
                 f"lr_scheduler must be 'reduce_on_plateau' or 'cosine', got {lr_scheduler!r}"
@@ -310,27 +305,6 @@ class CNNLightningModule(pl.LightningModule):
             raise ValueError(
                 f"quantile_head=True requires quantile_tau in (0, 1), got {quantile_tau}"
             )
-        if focal_weight and quantile_head:
-            raise ValueError(
-                "focal_weight and quantile_head are alternative ways of biasing "
-                "the model toward extreme days — not designed to combine. Use "
-                "one or the other."
-            )
-        if focal_weight and not gaussian_nll:
-            raise ValueError(
-                "focal_weight=True requires gaussian_nll=True — it reweights the "
-                "per-sample GaussianNLLLoss term, there is no MSE/MAE equivalent."
-            )
-        if focal_weight:
-            if p90_by_doy is None or tuple(p90_by_doy.shape) != (365,):
-                raise ValueError(
-                    "focal_weight=True requires p90_by_doy, a (365,) tensor of "
-                    "the Hobday p90 threshold (physical units, same scale as "
-                    "the un-normalised target) for each day-of-year — got "
-                    f"{None if p90_by_doy is None else tuple(p90_by_doy.shape)}."
-                )
-            self.register_buffer("p90_by_doy", p90_by_doy.float())
-
         if gaussian_nll:
             if loss_fn != "GaussianNLLLoss":
                 raise ValueError(
@@ -393,52 +367,12 @@ class CNNLightningModule(pl.LightningModule):
             )
         return self(x_spatial, x_temporal), None
 
-    def _focal_weighted_loss(self, y_hat, y, target_doy):
-        """Per-sample GaussianNLLLoss reweighted toward exceedance days
-        (truth > Hobday p90(DOY)), instead of the auxiliary quantile head.
-        Keeps mean = E[Y|X] and var = conditional variance both statistically
-        unperturbed by any quantile objective — only the sample WEIGHTING
-        changes, not what mean/var are fit to predict. Weighted average
-        (sum(loss_i * w_i) / sum(w_i)), not weighted sum, so the loss stays
-        on the same scale as plain GNLL regardless of how many samples in
-        the batch are extreme.
-        """
-        mean = y_hat[:, 0:1]
-        log_var = y_hat[:, 1:2].clamp(min=-10.0, max=10.0)
-        var = torch.exp(log_var)
-        per_sample_nll = self.nll_loss_elementwise(mean, y, var)  # (batch, 1)
-
-        y_physical = y * self.target_std + self.target_mean
-        thresh = self.p90_by_doy[target_doy - 1].unsqueeze(-1)  # (batch, 1)
-        is_extreme = (y_physical > thresh).float()
-        weight = 1.0 + self.focal_alpha * is_extreme
-
-        loss = (per_sample_nll * weight).sum() / weight.sum()
-        return loss, mean, per_sample_nll.mean(), is_extreme.mean()
-
     def _step(self, batch, split: str):
         """Shared step logic. loss = NLL(mean, log_var) [+ quantile_weight *
-        pinball(q_pred, y, tau) if quantile_head] [OR focal-weighted NLL if
-        focal_weight — mutually exclusive with quantile_head, see __init__].
-        The quantile_head term depends on a disjoint parameter set
-        (self.model.fc vs. self.model.quantile_head), so that sum does not
-        blend gradients into either head — it only combines them at the
-        shared backbone."""
-        if self.focal_weight:
-            x_spatial, x_temporal, y, target_doy = batch
-            y_hat, _ = self._forward_dual(x_spatial, x_temporal)
-            loss, pred, plain_nll, frac_extreme = self._focal_weighted_loss(
-                y_hat, y, target_doy
-            )
-            self.log(
-                f"{split}_nll_loss_unweighted", plain_nll, on_step=False, on_epoch=True
-            )
-            self.log(f"{split}_nll_loss_weighted", loss, on_step=False, on_epoch=True)
-            self.log(
-                f"{split}_frac_extreme", frac_extreme, on_step=False, on_epoch=True
-            )
-            return loss, pred, y
-
+        pinball(q_pred, y, tau) if quantile_head]. The quantile_head term
+        depends on a disjoint parameter set (self.model.fc vs.
+        self.model.quantile_head), so that sum does not blend gradients
+        into either head — it only combines them at the shared backbone."""
         x_spatial, x_temporal, y = batch
         y_hat, q_pred = self._forward_dual(x_spatial, x_temporal)
         loss, pred = self._loss_and_pred(y_hat, y)
