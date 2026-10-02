@@ -14,7 +14,10 @@ and report.
 - **Valid data**: `$MHW_DATA_FILE` -> `merged_daily.nc`. Never a file with `_OLD`
   in its name, never `merged_daily_deepSST.nc`.
 - **Git**: `origin` is GitLab Codebase (`https://codebase.helmholtz.cloud/hereon-ksn/exprecursors.git`).
-  Never push to GitHub: it is a read-only mirror fed by Codebase.
+  Never push to GitHub: it is a read-only mirror fed by Codebase. **Never push.
+  The owner pushes manually** — do not assume git credentials (SSH key,
+  `~/.git-credentials`) are configured on whatever machine this session runs
+  on; they usually are not, and that is expected, not a problem to fix.
 - **SLURM**: `#SBATCH` lines are read literally, `${VAR}` is never expanded
   there; pass `--account` and `--mail-user` on the `sbatch` command line. Any job
   longer than 1 h saves one `.npz` per fold as soon as that fold ends, never at
