@@ -46,7 +46,7 @@ SEED = 42
 # Values of the options that later simplifications remove, as used by the
 # committed model. If the yaml still carries them they must match.
 EXPECTED = dict(
-    arch="lstm_only", gaussian_nll=True, temporal_features=0, state_feature=False
+    gaussian_nll=True, temporal_features=0, state_feature=False
 )
 # model_config.json keys that older runs did not write; the value the current
 # build uses must equal the value that was implicit at the time.
@@ -61,6 +61,10 @@ LOCATION_KEYS = {"data_dir", "output_dir", "run_name"}
 # resolved_config.yaml has exactly this value; any other value, or the key
 # still present with a different value, is an error like any other mismatch.
 REMOVED_INERT_KEYS = {
+    # CNNLSTMModel no longer takes an arch argument: the attention_only and
+    # lstm_attention branches were removed, lstm_only (what this checkpoint
+    # was built with) is now the only behaviour, hardcoded.
+    "arch": "lstm_only",
     # dataset.py's _compute_clim() returned immediately (vars_to_anom = [])
     # because every variable in merged_daily.nc already arrives anomalised --
     # clim_ref_start only bounded the reference period for that dead branch.
@@ -128,6 +132,8 @@ def load_reference_checkpoint(cfg):
     problems = []
     for key in sorted(set(saved) | set(built)):
         if key not in built:
+            if key in REMOVED_INERT_KEYS and saved[key] == REMOVED_INERT_KEYS[key]:
+                continue
             problems.append(f"model_config.json has {key}={saved[key]!r}, not built")
         elif key not in saved:
             if key not in IMPLICIT_IN_OLD_MODEL_CONFIG:

@@ -159,7 +159,6 @@ def main():
         lstm_layers=config.get("lstm_layers", 2),
         temporal_features=config.get("temporal_features", 0),
         dropout=config.get("dropout", 0.2),
-        arch=config.get("arch", "lstm_only"),
         gaussian_nll=config.get("gaussian_nll", False),
         pooling=config.get("pooling", "max"),
         padding_mode=config.get("padding_mode", "zeros"),

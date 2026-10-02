@@ -10,7 +10,6 @@ variables:
 ocean_variables:
 - ptho_bot
 in_channels: 5
-arch: lstm_only
 pooling: avg
 padding_mode: reflect
 gaussian_nll: true

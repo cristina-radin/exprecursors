@@ -1,11 +1,11 @@
 """
-CNN-LSTM + Temporal Attention model for MHW precursor detection.
+CNN-LSTM model for MHW precursor detection.
 
 Architecture:
-  1. CNN encoder:   each spatial frame (n_vars, lat, lon) → feature vector
-  2. LSTM:          sequence of feature vectors (window_size,) → hidden state
-  3. Attention:     weighted sum over LSTM outputs (which timesteps matter most)
-  4. FC head:       [attended_features + temporal_features] → scalar prediction
+  1. CNN encoder: each spatial frame (n_vars, lat, lon) → feature vector
+  2. LSTM:        sequence of feature vectors (window_size,) → hidden state
+                  (last timestep is used)
+  3. FC head:     [hidden state + temporal_features] → scalar prediction
 """
 
 import math
@@ -93,43 +93,13 @@ class CNNEncoder(nn.Module):
 
 
 # =============================================================================
-# Temporal Attention — which timesteps in the window matter most
-# =============================================================================
-
-
-class TemporalAttention(nn.Module):
-    """
-    Additive (Bahdanau-style) attention over LSTM output sequence.
-
-    Args:
-        hidden_size: LSTM hidden size
-    """
-
-    def __init__(self, hidden_size: int):
-        super().__init__()
-        self.attn = nn.Linear(hidden_size, 1)
-
-    def forward(self, lstm_out: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            lstm_out: (batch, window_size, hidden_size)
-        Returns:
-            context: (batch, hidden_size) — weighted sum over time
-        """
-        scores = self.attn(lstm_out).squeeze(-1)  # (batch, window_size)
-        weights = torch.softmax(scores, dim=-1).unsqueeze(-1)  # (batch, window_size, 1)
-        context = (lstm_out * weights).sum(dim=1)  # (batch, hidden_size)
-        return context
-
-
-# =============================================================================
 # Full model
 # =============================================================================
 
 
 class CNNLSTMModel(nn.Module):
     """
-    CNN-LSTM + Temporal Attention for regression.
+    CNN-LSTM for regression.
 
     Args:
         in_channels:     number of spatial input variables
@@ -150,7 +120,6 @@ class CNNLSTMModel(nn.Module):
         lstm_layers: int = 2,
         temporal_features: int = 3,
         dropout: float = 0.3,
-        arch: str = "lstm_only",
         gaussian_nll: bool = False,
         pooling: str = "max",
         quantile_head: bool = False,
@@ -160,7 +129,6 @@ class CNNLSTMModel(nn.Module):
         super().__init__()
 
         self.temporal_features = temporal_features
-        self.arch = arch
         self.gaussian_nll = gaussian_nll
         self.pooling = pooling
         self.padding_mode = padding_mode
@@ -183,29 +151,17 @@ class CNNLSTMModel(nn.Module):
             padding_mode=padding_mode,
         )
 
-        if arch == "attention_only":
-            # True CNN + Attention, no recurrence: attention operates directly
-            # on the per-timestep CNN features. Previously this branch still
-            # built and ran an LSTM (arch only changed the pooling *after* the
-            # LSTM), making "attention_only" structurally identical to
-            # "lstm_attention" — see project_arch_naming_bug memory.
-            self.lstm = None
-            context_dim = cnn_features
-        else:
-            self.lstm = nn.LSTM(
-                input_size=cnn_features,
-                hidden_size=lstm_hidden,
-                num_layers=lstm_layers,
-                batch_first=True,
-                dropout=dropout if lstm_layers > 1 else 0.0,
-            )
-            context_dim = lstm_hidden
+        self.lstm = nn.LSTM(
+            input_size=cnn_features,
+            hidden_size=lstm_hidden,
+            num_layers=lstm_layers,
+            batch_first=True,
+            dropout=dropout if lstm_layers > 1 else 0.0,
+        )
+        context_dim = lstm_hidden
 
-        if arch != "lstm_only":
-            self.attention = TemporalAttention(context_dim)
-
-        # FC head: LSTM/attention/CNN-attention features (+ temporal features
-        # if any) → [mean, log_var] if gaussian_nll else [mean] only.
+        # FC head: last LSTM timestep (+ temporal features if any) →
+        # [mean, log_var] if gaussian_nll else [mean] only.
         out_dim = 2 if gaussian_nll else 1
         self.fc = nn.Sequential(
             nn.Linear(context_dim + temporal_features + state_dim, 64),
@@ -217,7 +173,7 @@ class CNNLSTMModel(nn.Module):
         # Independent auxiliary head: predicts a single conditional quantile
         # of the target (tau set by the caller's pinball loss, e.g. 0.9).
         # Own parameters, no weight sharing with self.fc — only the backbone
-        # (cnn_encoder / lstm / attention) is shared, so a pinball-loss
+        # (cnn_encoder / lstm) is shared, so a pinball-loss
         # gradient on this head's output never reaches self.fc's mean/log_var
         # and vice versa. NOT the same thing as Hobday's p90_thresh (a fixed
         # climatological, day-of-year threshold defined in src/utils/hobday.py)
@@ -263,16 +219,8 @@ class CNNLSTMModel(nn.Module):
         features = self.cnn_encoder(x_flat)  # (batch*window, cnn_features)
         features = features.view(batch, window, -1)  # (batch, window, cnn_features)
 
-        if self.arch == "attention_only":
-            context = self.attention(
-                features
-            )  # attention directly over CNN features, no LSTM
-        else:
-            lstm_out, _ = self.lstm(features)  # (batch, window, lstm_hidden)
-            if self.arch == "lstm_only":
-                context = lstm_out[:, -1, :]  # last timestep, no attention
-            else:
-                context = self.attention(lstm_out)  # (batch, lstm_hidden)
+        lstm_out, _ = self.lstm(features)  # (batch, window, lstm_hidden)
+        context = lstm_out[:, -1, :]  # last timestep
 
         if self.temporal_features > 0:
             temporal_summary = x_temporal.mean(dim=1)
@@ -336,44 +284,6 @@ class CNNLSTMModel(nn.Module):
         y_hat = self.fc(combined)
         q_pred = self.quantile_head(combined)
         return y_hat, q_pred
-
-    def forward_with_attention(
-        self,
-        x_spatial: torch.Tensor,
-        x_temporal: torch.Tensor,
-    ):
-        """Like forward() but also returns attention weights.
-
-        NOTE: pre-existing third copy of the backbone, not routed through
-        _encode() — it needs attn_weights, which _encode()/TemporalAttention
-        don't expose. No quantile-head path here (quantile_head + attention
-        + XAI is unimplemented — would need TemporalAttention to return
-        weights so this can share _encode() instead of reimplementing).
-
-        Returns:
-            pred:         (batch, 1)
-            attn_weights: (batch, window_size)  — softmax weights over time
-        """
-        batch, window, n_vars, lat, lon = x_spatial.shape
-
-        x_flat = x_spatial.view(batch * window, n_vars, lat, lon)
-        features = self.cnn_encoder(x_flat).view(batch, window, -1)
-
-        attn_input = (
-            features if self.arch == "attention_only" else self.lstm(features)[0]
-        )
-
-        scores = self.attention.attn(attn_input).squeeze(-1)  # (batch, window)
-        attn_weights = torch.softmax(scores, dim=-1)  # (batch, window)
-        context = (attn_input * attn_weights.unsqueeze(-1)).sum(dim=1)
-
-        if self.temporal_features > 0:
-            temporal_summary = x_temporal.mean(dim=1)
-            combined = torch.cat([context, temporal_summary], dim=-1)
-        else:
-            combined = context
-        return self.fc(combined), attn_weights
-
 
 # =============================================================================
 # Lightning module
