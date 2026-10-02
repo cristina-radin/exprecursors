@@ -23,9 +23,6 @@ temporal_features: 0
 split_mode: stratified_kfold
 n_folds: 5
 fold: 0
-train_ratio: 0.75
-val_ratio: 0.15
-test_ratio: 0.1
 seed: 42
 run_name: TbotAtm_full_gnll_quantile_v2_landfill_seed42_fold0
 normalize: true
