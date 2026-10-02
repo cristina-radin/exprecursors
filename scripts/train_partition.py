@@ -176,7 +176,7 @@ def main():
         quantile_head=config.get("quantile_head", False),
         quantile_tau=config.get("quantile_tau", 0.0),
         quantile_weight=config.get("quantile_weight", 0.7),
-        lr_scheduler=config.get("lr_scheduler", "reduce_on_plateau"),
+        lr_scheduler=config.get("lr_scheduler", "cosine"),
         warmup_epochs=config.get("warmup_epochs", 5),
         cosine_t_max_epochs=config.get("cosine_t_max_epochs"),
     )

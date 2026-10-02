@@ -19,8 +19,7 @@ tensor, normalisation constants, sample indices, checkpoint hash) so that a
 mismatch can be attributed to data, weights or model code.
 
 It only uses code paths that survive the planned simplifications: constructor
-arguments are filtered by signature, and the values the removed options had in
-the committed model are pinned in EXPECTED.
+arguments are filtered by signature.
 """
 
 import argparse
@@ -43,9 +42,6 @@ CONFIG = REPO / "configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml"
 REFERENCE = REPO / "tools/reference/equivalence_fold0.npz"
 SAMPLE_POSITIONS = (0, 731, 1462, 2193)  # positions inside the fold-0 test set
 SEED = 42
-# Values of the options that later simplifications remove, as used by the
-# committed model. If the yaml still carries them they must match.
-EXPECTED = dict(gaussian_nll=True)
 # yaml keys that legitimately differ between fold0.yaml and a run's
 # resolved_config.yaml (locations moved to environment variables).
 LOCATION_KEYS = {"data_dir", "output_dir", "run_name"}
@@ -97,19 +93,16 @@ def _filter(callable_, kwargs):
 
 
 def model_kwargs(cfg):
-    for key, value in EXPECTED.items():
-        if key in cfg and cfg[key] != value:
-            raise ValueError(f"{key}={cfg[key]!r} in yaml, expected {value!r}")
     return dict(
         in_channels=cfg["in_channels"],
         cnn_features=cfg["cnn_features"],
         lstm_hidden=cfg["lstm_hidden"],
         lstm_layers=cfg["lstm_layers"],
         dropout=cfg["dropout"],
+        gaussian_nll=cfg["gaussian_nll"],
         pooling=cfg["pooling"],
         padding_mode=cfg["padding_mode"],
         quantile_head=cfg["quantile_head"],
-        **EXPECTED,
     )
 
 

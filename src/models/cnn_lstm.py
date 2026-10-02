@@ -249,7 +249,7 @@ class CNNLightningModule(pl.LightningModule):
         quantile_head: bool = False,
         quantile_tau: float = 0.0,
         quantile_weight: float = 0.7,
-        lr_scheduler: str = "reduce_on_plateau",
+        lr_scheduler: str = "cosine",
         warmup_epochs: int = 5,
         cosine_t_max_epochs: int = None,
     ):
@@ -264,11 +264,8 @@ class CNNLightningModule(pl.LightningModule):
         self.quantile_head = quantile_head
         self.quantile_tau = quantile_tau
         self.quantile_weight = quantile_weight
-        if lr_scheduler not in ("reduce_on_plateau", "cosine"):
-            raise ValueError(
-                f"lr_scheduler must be 'reduce_on_plateau' or 'cosine', got {lr_scheduler!r}"
-            )
-        self.lr_scheduler_type = lr_scheduler
+        if lr_scheduler != "cosine":
+            raise ValueError(f"lr_scheduler must be 'cosine', got {lr_scheduler!r}")
         self.warmup_epochs = warmup_epochs
         self.cosine_t_max_epochs = cosine_t_max_epochs
 
@@ -285,17 +282,14 @@ class CNNLightningModule(pl.LightningModule):
         if gaussian_nll:
             if loss_fn != "GaussianNLLLoss":
                 raise ValueError(
-                    f"gaussian_nll=True but loss_fn={loss_fn!r} — loss_fn has no "
-                    "effect once gaussian_nll is set (the GNLL branch in "
-                    "_loss_and_pred() is unconditional), so a mismatched value "
-                    "here almost certainly means the config is wrong, not that "
-                    "MSE/MAE is actually being used. Set loss_fn: GaussianNLLLoss "
-                    "explicitly to make that clear at the call site."
+                    f"gaussian_nll=True requires loss_fn='GaussianNLLLoss', got "
+                    f"{loss_fn!r}."
                 )
             self.nll_loss = nn.GaussianNLLLoss()
-            self.nll_loss_elementwise = nn.GaussianNLLLoss(reduction="none")
-        elif loss_fn == "MAELoss":
-            self.loss_fn = nn.L1Loss()
+        elif loss_fn != "MSELoss":
+            raise ValueError(
+                f"gaussian_nll=False requires loss_fn='MSELoss', got {loss_fn!r}."
+            )
         else:
             self.loss_fn = nn.MSELoss()
 
@@ -436,46 +430,31 @@ class CNNLightningModule(pl.LightningModule):
         optimizer = torch.optim.Adam(
             self.parameters(), lr=self.learning_rate, weight_decay=1e-4
         )
-        if self.lr_scheduler_type == "cosine":
-            # Linear warmup for warmup_epochs, then cosine decay to 0 over
-            # the remaining epochs. T_max is cosine_t_max_epochs if given
-            # (the REALISTIC expected training length, e.g. from prior
-            # early-stopping history — not `max_epochs`, which is usually
-            # an artificial early-stopping ceiling; annealing against the
-            # literal `max_epochs` barely decays at all if the run stops
-            # far earlier, silently defeating the point of using cosine).
-            # Falls back to the attached Trainer's max_epochs only if
-            # cosine_t_max_epochs isn't set. No silent numeric fallback if
-            # neither is available -- config bug, must be visible, not
-            # guessed at (CLAUDE.md "no silent fallbacks").
-            if self.cosine_t_max_epochs is not None:
-                max_epochs = self.cosine_t_max_epochs
-            elif self.trainer is not None:
-                max_epochs = self.trainer.max_epochs
-            else:
-                raise RuntimeError(
-                    "lr_scheduler='cosine' needs either cosine_t_max_epochs set "
-                    "explicitly or an attached Trainer with max_epochs -- got neither."
-                )
-            warmup = self.warmup_epochs
-
-            def lr_lambda(epoch: int) -> float:
-                if epoch < warmup:
-                    return (epoch + 1) / warmup
-                progress = (epoch - warmup) / max(1, max_epochs - warmup)
-                return 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
-
-            scheduler = torch.optim.lr_scheduler.LambdaLR(
-                optimizer, lr_lambda=lr_lambda
+        # Linear warmup for warmup_epochs, then cosine decay to 0 over the
+        # remaining epochs. max_epochs is cosine_t_max_epochs if set (the
+        # realistic expected training length), else the attached Trainer's
+        # max_epochs -- which is usually an early-stopping ceiling far
+        # longer than any real run, so cosine_t_max_epochs should be set
+        # explicitly whenever the real length is known.
+        if self.cosine_t_max_epochs is not None:
+            max_epochs = self.cosine_t_max_epochs
+        elif self.trainer is not None:
+            max_epochs = self.trainer.max_epochs
+        else:
+            raise RuntimeError(
+                "cosine_t_max_epochs is not set and no Trainer is attached -- "
+                "need one of the two to pick the decay horizon."
             )
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
-            }
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.5, patience=5
-        )
+        warmup = self.warmup_epochs
+
+        def lr_lambda(epoch: int) -> float:
+            if epoch < warmup:
+                return (epoch + 1) / warmup
+            progress = (epoch - warmup) / max(1, max_epochs - warmup)
+            return 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "monitor": "val_loss"},
+            "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
         }
