@@ -54,6 +54,22 @@ IMPLICIT_IN_OLD_MODEL_CONFIG = {"state_feature": False}
 # yaml keys that legitimately differ between fold0.yaml and a run's
 # resolved_config.yaml (locations moved to environment variables).
 LOCATION_KEYS = {"data_dir", "output_dir", "run_name"}
+# Options removed from fold0.yaml because they had no effect on the committed
+# model (dead/no-op code paths at the time this checkpoint was trained) -- see
+# docs/open_issues.md for why each one was inert. A key here may be absent
+# from the current fold0.yaml only if the checkpoint's own
+# resolved_config.yaml has exactly this value; any other value, or the key
+# still present with a different value, is an error like any other mismatch.
+REMOVED_INERT_KEYS = {
+    # dataset.py's _compute_clim() returned immediately (vars_to_anom = [])
+    # because every variable in merged_daily.nc already arrives anomalised --
+    # clim_ref_start only bounded the reference period for that dead branch.
+    "clim_ref_start": 1985,
+    # see clim_ref_start: same dead branch.
+    "clim_ref_end": 2014,
+    # half-window size for the same dead climatology computation.
+    "clim_window": 5,
+}
 
 
 def _filter(callable_, kwargs):
@@ -118,6 +134,8 @@ def load_reference_checkpoint(cfg):
     resolved = yaml.safe_load(open(ckpt_dir / "resolved_config.yaml"))
     for key in sorted((set(resolved) | set(cfg)) - LOCATION_KEYS):
         if key not in cfg:
+            if key in REMOVED_INERT_KEYS and resolved.get(key) == REMOVED_INERT_KEYS[key]:
+                continue
             problems.append(f"resolved_config.yaml has {key}={resolved[key]!r}, fold0.yaml does not")
         elif key not in resolved:
             problems.append(f"fold0.yaml has {key}={cfg[key]!r}, resolved_config.yaml does not")
