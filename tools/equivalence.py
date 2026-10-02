@@ -69,6 +69,15 @@ REMOVED_INERT_KEYS = {
     "clim_ref_end": 2014,
     # half-window size for the same dead climatology computation.
     "clim_window": 5,
+    # datamodule.py's stratified_kfold branch never read train_ratio -- the
+    # split is fixed by the n_folds-bucket rotation; these three values were
+    # only read to satisfy an assert that they sum to 1.0 (datamodule.py
+    # itself printed a NOTE saying it ignored them for this split_mode).
+    "train_ratio": 0.75,
+    # see train_ratio.
+    "val_ratio": 0.15,
+    # see train_ratio.
+    "test_ratio": 0.1,
 }
 
 
