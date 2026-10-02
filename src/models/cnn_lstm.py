@@ -49,9 +49,9 @@ class CNNEncoder(nn.Module):
     def __init__(
         self,
         in_channels: int,
-        out_features: int = 128,
-        pooling: str = "max",
-        padding_mode: str = "zeros",
+        out_features: int,
+        pooling: str,
+        padding_mode: str,
     ):
         super().__init__()
 
@@ -113,15 +113,15 @@ class CNNLSTMModel(nn.Module):
 
     def __init__(
         self,
-        in_channels: int = 5,
-        cnn_features: int = 128,
-        lstm_hidden: int = 256,
-        lstm_layers: int = 2,
-        dropout: float = 0.3,
-        gaussian_nll: bool = False,
-        pooling: str = "max",
-        quantile_head: bool = False,
-        padding_mode: str = "zeros",
+        in_channels: int,
+        cnn_features: int,
+        lstm_hidden: int,
+        lstm_layers: int,
+        dropout: float,
+        gaussian_nll: bool,
+        pooling: str,
+        quantile_head: bool,
+        padding_mode: str,
     ):
         super().__init__()
 
@@ -241,17 +241,17 @@ class CNNLightningModule(pl.LightningModule):
     def __init__(
         self,
         model: nn.Module,
-        learning_rate: float = 1e-3,
-        target_mean: float = 0.0,
-        target_std: float = 1.0,
-        loss_fn: str = "MSELoss",
-        gaussian_nll: bool = False,
-        quantile_head: bool = False,
-        quantile_tau: float = 0.0,
-        quantile_weight: float = 0.7,
-        lr_scheduler: str = "cosine",
-        warmup_epochs: int = 5,
-        cosine_t_max_epochs: int = None,
+        learning_rate: float,
+        target_mean: float,
+        target_std: float,
+        loss_fn: str,
+        gaussian_nll: bool,
+        quantile_head: bool,
+        quantile_tau: float,
+        quantile_weight: float,
+        lr_scheduler: str,
+        warmup_epochs: int,
+        cosine_t_max_epochs: int,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])

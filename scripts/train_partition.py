@@ -150,19 +150,19 @@ def main():
 
     model_kwargs = dict(
         in_channels=config["in_channels"],
-        cnn_features=config.get("cnn_features", 256),
-        lstm_hidden=config.get("lstm_hidden", 512),
-        lstm_layers=config.get("lstm_layers", 2),
-        dropout=config.get("dropout", 0.2),
-        gaussian_nll=config.get("gaussian_nll", False),
-        pooling=config.get("pooling", "max"),
-        padding_mode=config.get("padding_mode", "zeros"),
-        quantile_head=config.get("quantile_head", False),
+        cnn_features=config["cnn_features"],
+        lstm_hidden=config["lstm_hidden"],
+        lstm_layers=config["lstm_layers"],
+        dropout=config["dropout"],
+        gaussian_nll=config["gaussian_nll"],
+        pooling=config["pooling"],
+        padding_mode=config["padding_mode"],
+        quantile_head=config["quantile_head"],
     )
     model = CNNLSTMModel(**model_kwargs)
     # Ground truth for eval/XAI scripts (load_model_config) — the exact
     # resolved kwargs used to build `model`, so they can't independently
-    # re-derive (and drift from) these defaults. See src/utils/checkpoints.py.
+    # re-derive them. See src/utils/checkpoints.py.
     save_model_config(output_dir, **model_kwargs)
 
     LightningClass = MODE_MAP[args.mode]
@@ -171,14 +171,14 @@ def main():
         learning_rate=config["learning_rate"],
         target_mean=datamodule.target_mean,
         target_std=datamodule.target_std,
-        loss_fn=config.get("loss_fn", "MSELoss"),
-        gaussian_nll=config.get("gaussian_nll", False),
-        quantile_head=config.get("quantile_head", False),
-        quantile_tau=config.get("quantile_tau", 0.0),
-        quantile_weight=config.get("quantile_weight", 0.7),
-        lr_scheduler=config.get("lr_scheduler", "cosine"),
-        warmup_epochs=config.get("warmup_epochs", 5),
-        cosine_t_max_epochs=config.get("cosine_t_max_epochs"),
+        loss_fn=config["loss_fn"],
+        gaussian_nll=config["gaussian_nll"],
+        quantile_head=config["quantile_head"],
+        quantile_tau=config["quantile_tau"],
+        quantile_weight=config["quantile_weight"],
+        lr_scheduler=config["lr_scheduler"],
+        warmup_epochs=config["warmup_epochs"],
+        cosine_t_max_epochs=config["cosine_t_max_epochs"],
     )
 
     callbacks = [
