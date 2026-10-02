@@ -46,20 +46,6 @@ class LazyDataset(Dataset):
         # unaffected — only a loss variant that needs a DOY-dependent
         # threshold (e.g. focal-weighted NLL) should set this.
         self.return_target_doy = config.get("return_target_doy", False)
-        # Opt-in: __getitem__ additionally returns a normalized "state"
-        # scalar (Aug 23 2026) -- the target's own value at the LAST day
-        # of the input window (index i+window_size-1), i.e. exactly what
-        # lag-persistence uses as its prediction, normalized the same way
-        # as y. The model never otherwise sees the target itself as input
-        # (only ptho_bot, a different variable) -- this tests whether
-        # giving the network explicit access to "today's true state"
-        # beats the post-hoc linear hybrid (docs/narrative.md, Aug 23
-        # 2026 incremental-value-regression entry) via nonlinear/
-        # state-dependent combination. Off by default, same
-        # backward-compatibility reasoning as return_target_doy above.
-        # Mutually orthogonal to return_target_doy -- both can be True at
-        # once if ever needed (not currently exercised by any config).
-        self.use_state_feature = config.get("use_state_feature", False)
 
         self.ds = xr.open_mfdataset(file_name, parallel=True, engine="netcdf4")
 
@@ -239,8 +225,7 @@ class LazyDataset(Dataset):
     def __getitem__(self, idx: int):
         """
         Returns (x_spatial, x_temporal, y), plus target_doy if
-        self.return_target_doy, plus state if self.use_state_feature
-        (order: x_spatial, x_temporal, y, [target_doy], [state]):
+        self.return_target_doy (order: x_spatial, x_temporal, y, [target_doy]):
             x_spatial:  (window_size, n_vars, lat, lon) — anomalised + normalised
             x_temporal: (window_size, 3)                — year_norm, month_sin, month_cos
             y:          (1,)                            — normalised North Sea SST anomaly
@@ -249,13 +234,6 @@ class LazyDataset(Dataset):
                 loss variants that need to look up a DOY-dependent threshold
                 (e.g. Hobday p90). Leap day (366) folded into 365, same
                 convention as the climatology-subtraction branch above.
-            state:      (1,)                            — the target's own
-                normalised value at the LAST day of the input window
-                (idx + window_size - 1), i.e. exactly what lag-persistence
-                uses as its prediction. Normalised with the SAME
-                target_mean/target_std as y (same physical quantity, same
-                scale) -- not a new leak, this day is always strictly
-                before the target day since lead_time >= 1.
         """
         if self.target_mean is None or self.target_std is None:
             raise RuntimeError(
@@ -316,10 +294,5 @@ class LazyDataset(Dataset):
             if target_doy >= 365:
                 target_doy = 365
             extra.append(torch.tensor(target_doy, dtype=torch.long))
-        if self.use_state_feature:
-            state_idx = idx + self.window_size - 1
-            state_raw = self.target[state_idx]
-            state = ((state_raw - self.target_mean) / self.target_std).unsqueeze(0)
-            extra.append(state)
 
         return (x_spatial, x_temporal, y, *extra)

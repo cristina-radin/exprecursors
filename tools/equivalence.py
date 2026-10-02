@@ -45,12 +45,7 @@ SAMPLE_POSITIONS = (0, 731, 1462, 2193)  # positions inside the fold-0 test set
 SEED = 42
 # Values of the options that later simplifications remove, as used by the
 # committed model. If the yaml still carries them they must match.
-EXPECTED = dict(
-    gaussian_nll=True, temporal_features=0, state_feature=False
-)
-# model_config.json keys that older runs did not write; the value the current
-# build uses must equal the value that was implicit at the time.
-IMPLICIT_IN_OLD_MODEL_CONFIG = {"state_feature": False}
+EXPECTED = dict(gaussian_nll=True, temporal_features=0)
 # yaml keys that legitimately differ between fold0.yaml and a run's
 # resolved_config.yaml (locations moved to environment variables).
 LOCATION_KEYS = {"data_dir", "output_dir", "run_name"}
@@ -136,13 +131,7 @@ def load_reference_checkpoint(cfg):
                 continue
             problems.append(f"model_config.json has {key}={saved[key]!r}, not built")
         elif key not in saved:
-            if key not in IMPLICIT_IN_OLD_MODEL_CONFIG:
-                problems.append(f"{key}={built[key]!r} built, missing in model_config.json")
-            elif built[key] != IMPLICIT_IN_OLD_MODEL_CONFIG[key]:
-                problems.append(
-                    f"{key}={built[key]!r} built, implicit value was "
-                    f"{IMPLICIT_IN_OLD_MODEL_CONFIG[key]!r}"
-                )
+            problems.append(f"{key}={built[key]!r} built, missing in model_config.json")
         elif saved[key] != built[key]:
             problems.append(f"{key}: model_config.json={saved[key]!r} built={built[key]!r}")
 
