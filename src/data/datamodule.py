@@ -88,8 +88,8 @@ class LazyDataModule(pl.LightningDataModule):
         self.train_dataset = None
         self.val_dataset = None
         self.test_dataset = None
-        self.target_mean = 0.0
-        self.target_std = 1.0
+        self.target_mean = None
+        self.target_std = None
 
     def setup(self, stage: Optional[str] = None) -> None:
         if self.train_dataset is not None:
