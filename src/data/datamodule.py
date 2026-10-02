@@ -1,14 +1,11 @@
 """
-PyTorch Lightning DataModule for daily climate data.
+PyTorch Lightning DataModule for the North Sea MHW dataset.
 
-Only split_mode="stratified_kfold" is supported: val/test years come from
-rotating, non-overlapping buckets built by round-robin assignment over years
-ranked by Hobday MHW-day count (descending), so (a) every fold gets a
-different val_years set by construction, and (b) MHW-day representation is
-balanced across folds instead of landing wherever a random permutation
-happens to put it. See known_issues.md #1/#2 for the exact measurements that
-motivated this (the legacy "kfold" mode it replaces had val_years identical
-across folds 1..n_folds-1).
+Builds a stratified k-fold split: ranks calendar years by MHW-day count,
+deals them round-robin into n_folds buckets, and uses one bucket as test,
+the next bucket as val, and the rest as train. This keeps MHW-day
+representation balanced across folds and gives every fold a different val
+set.
 """
 
 from typing import Optional
@@ -18,18 +15,14 @@ import pytorch_lightning as pl
 import yaml
 from torch.utils.data import DataLoader, Subset
 
+from src.utils.hobday import apply_hobday, load_ns_p90
 from src.utils.paths import DATA_FILE
 
 from .dataset import LazyDataset
 
 
 def _mhw_days_per_year(full_ds, unique_years):
-    """MHW-day count per calendar year, from the raw daily target series
-    (Hobday basin-mean definition) -- reuses apply_hobday()/load_ns_p90()
-    rather than reimplementing exceedance/persistence logic (see
-    known_issues.md #1's meta-hallazgo on duplicated-and-wrong split code)."""
-    from src.utils.hobday import apply_hobday, load_ns_p90
-
+    """Count MHW days per calendar year in the full target series."""
     p90 = load_ns_p90()  # (365,)
     raw_doys = full_ds.doys.copy()
     raw_doys[raw_doys >= 365] = 365
@@ -40,25 +33,29 @@ def _mhw_days_per_year(full_ds, unique_years):
     return {int(y): int(mhw_day_bool[raw_years == y].sum()) for y in unique_years}
 
 
-def _print_year_split(
-    mode_label, train_years, val_years, test_years, mhw_days_per_year
+def _print_split(
+    fold,
+    n_folds,
+    train_years,
+    val_years,
+    test_years,
+    mhw_days_per_year,
+    train_indices,
+    val_indices,
+    test_indices,
 ):
-    """Mandatory diagnostic print (plan rule, Aug 20 2026: 'sacar las
-    configs reales resueltas como output' + 'comprobar siempre el numero
-    de dias bajo MHW') -- the exact year lists, not just counts, for every
-    fold, so a glance at the SLURM log confirms what's actually in each
-    split without having to reconstruct it by hand."""
+    """Print each split's years, MHW-day counts, and sample counts."""
 
     def _days(years_set):
         return sum(mhw_days_per_year[int(y)] for y in years_set)
 
-    print(f"\n{mode_label}:")
+    print(f"\nStratified k-fold (fold={fold}/{n_folds}):")
     print(f"  train_years ({len(train_years)}): {sorted(train_years)}")
-    print(f"    MHW days: {_days(train_years)}")
+    print(f"    MHW days: {_days(train_years)}, samples: {len(train_indices)}")
     print(f"  val_years   ({len(val_years)}): {sorted(val_years)}")
-    print(f"    MHW days: {_days(val_years)}")
+    print(f"    MHW days: {_days(val_years)}, samples: {len(val_indices)}")
     print(f"  test_years  ({len(test_years)}): {sorted(test_years)}")
-    print(f"    MHW days: {_days(test_years)}")
+    print(f"    MHW days: {_days(test_years)}, samples: {len(test_indices)}")
 
 
 class LazyDataModule(pl.LightningDataModule):
@@ -101,10 +98,10 @@ class LazyDataModule(pl.LightningDataModule):
         full_ds = LazyDataset(self.data_dir, config_path=self.hparams.config_path)
         total_size = len(full_ds)
 
-        fold = self.config.get("fold", 0)
-        n_folds = self.config.get("n_folds", 5)
+        fold = self.config["fold"]
+        n_folds = self.config["n_folds"]
 
-        # Year of the TARGET for each sample
+        # Year of the target day for each sample.
         target_years = np.array(
             [
                 int(full_ds.years[i + full_ds.window_size - 1 + full_ds.lead_time])
@@ -113,36 +110,35 @@ class LazyDataModule(pl.LightningDataModule):
         )
         unique_years = np.unique(target_years)
 
-        # Rank years by Hobday MHW-day count (descending) -- reuses
-        # apply_hobday()/load_ns_p90() rather than reimplementing
-        # exceedance/persistence logic (known_issues.md pattern of
-        # duplicated-and-wrong split/threshold code, e.g. #1's
-        # meta-hallazgo on persistence_remote_sst.py/ig_simple.py).
+        # Rank years by MHW-day count, most extreme first.
         mhw_days_per_year = _mhw_days_per_year(full_ds, unique_years)
 
+        # Deal the ranked years round-robin into n_folds buckets.
         ranked_years = sorted(unique_years, key=lambda y: -mhw_days_per_year[int(y)])
         buckets = [[] for _ in range(n_folds)]
         for i, y in enumerate(ranked_years):
             buckets[i % n_folds].append(int(y))
 
+        # This fold's bucket is test, the next bucket is val, the rest is train.
         test_years = set(buckets[fold])
         val_years = set(buckets[(fold + 1) % n_folds])
         train_years = set(unique_years.tolist()) - test_years - val_years
 
+        # Samples whose target day falls in a train/val/test year.
         train_indices = [i for i in range(total_size) if target_years[i] in train_years]
         val_indices = [i for i in range(total_size) if target_years[i] in val_years]
         test_indices = [i for i in range(total_size) if target_years[i] in test_years]
 
-        # Mandatory diagnostic print (known_issues.md #1/#2): the exact
-        # year lists, not just counts, so a glance at the log confirms
-        # val_years doesn't collide with another fold's and that all
-        # three splits carry real MHW representation.
-        _print_year_split(
-            f"Stratified k-fold (fold={fold}/{n_folds})",
+        _print_split(
+            fold,
+            n_folds,
             train_years,
             val_years,
             test_years,
             mhw_days_per_year,
+            train_indices,
+            val_indices,
+            test_indices,
         )
 
         full_ds.compute_stats(train_indices)
@@ -152,11 +148,6 @@ class LazyDataModule(pl.LightningDataModule):
         self.train_dataset = Subset(full_ds, train_indices)
         self.val_dataset = Subset(full_ds, val_indices)
         self.test_dataset = Subset(full_ds, test_indices)
-
-        print(f"\nStratified k-fold (fold={fold}/{n_folds}):")
-        print(f"  Train: {len(train_indices)} samples")
-        print(f"  Val:   {len(val_indices)} samples")
-        print(f"  Test:  {len(test_indices)} samples")
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
