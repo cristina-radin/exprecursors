@@ -28,22 +28,13 @@ class CNNEncoder(nn.Module):
     Args:
         in_channels: number of input variables (e.g. 5)
         out_features: size of the output feature vector
-        pooling: "max" (default, original architecture) or "avg". AvgPool
-            spreads the IG/gradient backward pass over the full 2×2 window
-            instead of routing it through a single argmax position — avoids
-            the ~8px periodic grid artifact documented in known_issues.md #26
-            (vanilla-gradient saliency through 3 cascaded MaxPool2d layers).
-            Changes only these 3 pooling layers, not AdaptiveAvgPool2d at the
-            end (already an avg-pool, unaffected either way).
-        padding_mode: "zeros" (default, original architecture) or "reflect".
-            Zero padding introduces a hard discontinuity at the domain
-            boundary (land/edge pixels are already NaN→0 via the land mask,
-            so zero-padding adds a second, purely artificial edge on top of
-            that) — the CNN's gradient reacts to this edge, producing
-            boundary-band artifacts in IG/gradient saliency maps distinct
-            from the #26 pooling-grid artifact. Reflect padding mirrors the
-            interior signal across the border instead of introducing a new
-            zero discontinuity. Applies to all 4 Conv2d layers.
+        pooling: "max" or "avg". AvgPool spreads the gradient backward pass
+            over the full 2x2 window instead of routing it through a single
+            argmax position. Applies to these 3 pooling layers only, not
+            AdaptiveAvgPool2d at the end (already an avg-pool either way).
+        padding_mode: "zeros" or "reflect". Reflect padding mirrors the
+            interior signal across the border instead of introducing a zero
+            discontinuity at the domain edge. Applies to all 4 Conv2d layers.
     """
 
     def __init__(

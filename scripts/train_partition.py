@@ -9,8 +9,8 @@ Three conditions, same TbotAtm variable set (ptho_bot + atmosphere):
 NS box (same as dataset.py): lat[100:127], lon[150:187]
 
 Usage:
-  python partition/train_partition.py --config partition/configs/remote/fold0.yaml --mode remote_only
-  python partition/train_partition.py --config partition/configs/local/fold0.yaml  --mode local_only
+  python scripts/train_partition.py --config configs/partition/remote/fold0.yaml --mode remote_only
+  python scripts/train_partition.py --config configs/partition/local/fold0.yaml  --mode local_only
 """
 
 import sys
@@ -135,11 +135,9 @@ def main():
     output_dir = EXPERIMENTS_DIR / "partition" / config["run_name"]
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Mandatory output (plan rule, Aug 20 2026: "sacar las configs reales
-    # resueltas como output"): the exact resolved config this run is using,
-    # both in the SLURM/stdout log (readable without opening wandb) and as
-    # a standalone file in output_dir (survives after the run, unlike the
-    # log, and doesn't require network/wandb access to inspect later).
+    # Print and save the exact resolved config this run is using, both in
+    # the SLURM/stdout log and as a standalone file in output_dir (survives
+    # after the run and doesn't require wandb access to inspect later).
     print(f"\n=== Resolved config: {args.config} ===")
     print(yaml.dump(config, sort_keys=False, default_flow_style=False))
     with open(output_dir / "resolved_config.yaml", "w") as f:
@@ -228,18 +226,12 @@ def main():
     )
 
     trainer.fit(lightning_module, datamodule=datamodule)
-    # ckpt_path=None (the previous default) tests the CURRENT in-memory
-    # weights -- i.e. whatever epoch EarlyStopping happened to stop at,
-    # not the best val_loss checkpoint ModelCheckpoint actually selected
-    # and saved. Found Aug 20 2026 (known_issues.md #46) after val_loss
-    # curves looked "terrible" in wandb: GaussianNLLLoss's variance term
-    # can spike val_loss 10-50x above its own best epoch late in training,
-    # and every test_mae/test_corr/test_loss number reported so far was
-    # silently computed from whichever point training stopped at, not the
-    # model that was actually selected as best. fast_dev_run disables
-    # checkpoint saving entirely, so "best" isn't available there --
-    # falls back to current weights only in that case (dry runs don't
-    # need a real checkpoint to sanity-check the code path).
+    # ckpt_path=None tests the current in-memory weights (whatever epoch
+    # EarlyStopping stopped at), not the best val_loss checkpoint
+    # ModelCheckpoint actually saved -- GaussianNLLLoss's variance term can
+    # spike val_loss well above its own best epoch late in training, so
+    # "best" and "last" can differ a lot. fast_dev_run disables checkpoint
+    # saving entirely, so "best" isn't available there.
     ckpt_path = "best" if not args.fast_dev_run else None
     trainer.test(lightning_module, datamodule=datamodule, ckpt_path=ckpt_path)
 

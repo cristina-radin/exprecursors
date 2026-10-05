@@ -229,31 +229,28 @@ class LazyDataset(Dataset):
                 "been called: input_means/input_stds are None."
             )
 
-        window_spatial = []
-
-        for t in range(idx, idx + self.window_size):
-            # --- Spatial frame ---
-            frame = torch.stack([self.data[v][t] for v in self.variables], dim=0)
-
-            # Land mask (ocean variables only) -- skipped when
-            # land_fill_mode="nearest": self.data[var] already has land
-            # pixels filled from their nearest ocean neighbor (done once
-            # in __init__), so there's nothing left to NaN out here.
-            if self.land_fill_mode == "zero":
-                for i, var in enumerate(self.variables):
-                    if var in self.ocean_variables:
-                        frame[i, self.land_masks[var]] = float("nan")
-
-            # Normalise
-            if self.normalize:
-                frame = (frame - self.input_means) / self.input_stds
-
-            frame = torch.nan_to_num(frame, nan=0.0)
-            window_spatial.append(frame)
-
+        end = idx + self.window_size
         x_spatial = torch.stack(
-            window_spatial, dim=0
+            [self.data[v][idx:end] for v in self.variables], dim=1
         )  # (window_size, n_vars, lat, lon)
+
+        if self.land_fill_mode == "zero":
+            # This is the zero-fill itself, not a safety net: land pixels of
+            # ocean variables become NaN here, then 0 after normalising.
+            for i, var in enumerate(self.variables):
+                if var in self.ocean_variables:
+                    x_spatial[:, i, self.land_masks[var]] = float("nan")
+        elif torch.isnan(x_spatial).any():
+            raise RuntimeError(
+                "land_fill_mode='nearest' but the input has NaN values -- "
+                "land pixels should already be filled with real values."
+            )
+
+        if self.normalize:
+            x_spatial = (x_spatial - self.input_means) / self.input_stds
+
+        if self.land_fill_mode == "zero":
+            x_spatial = torch.nan_to_num(x_spatial, nan=0.0)
 
         target_idx = idx + self.window_size - 1 + self.lead_time
         y_raw = self.target[target_idx]
