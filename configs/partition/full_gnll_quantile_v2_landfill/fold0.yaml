@@ -32,7 +32,7 @@ dropout: 0.2
 learning_rate: 0.00005
 lr_scheduler: cosine
 warmup_epochs: 5
-cosine_t_max_epochs: 60  # same v2 treatment as full_gnll_focal_v2 -- see known_issues.md and narrative.md Aug 20 2026
+cosine_t_max_epochs: 60
 batch_size: 16
 max_epochs: 1000
 window_size: 60

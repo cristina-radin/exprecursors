@@ -20,8 +20,10 @@ class LazyDataset(Dataset):
     Dataset for daily merged NetCDF (merged_daily.nc).
 
     Normalisation stats (input and target) are not computed here. Call
-    compute_stats(train_indices) from the DataModule after splitting, so
-    stats are derived from training data only.
+    compute_stats(train_indices) from the DataModule after splitting. Target
+    stats use only the train indices; input stats use the contiguous slice
+    from the first to the last train sample, which can include val/test
+    years that fall between train years (see compute_stats docstring).
     """
 
     def __init__(
@@ -108,6 +110,15 @@ class LazyDataset(Dataset):
                 self.data[var][:, land_rows, land_cols] = self.data[var][
                     :, src_rows, src_cols
                 ]
+        if self.land_fill_mode == "nearest":
+            for var in self.variables:
+                if torch.isnan(self.data[var]).any():
+                    raise RuntimeError(
+                        "land_fill_mode='nearest' but the input has NaN "
+                        "values -- land pixels should already be filled "
+                        "with real values."
+                    )
+
         self.target = torch.tensor(
             self.ds["target"].values, dtype=torch.float32
         )  # (time,)
@@ -240,11 +251,6 @@ class LazyDataset(Dataset):
             for i, var in enumerate(self.variables):
                 if var in self.ocean_variables:
                     x_spatial[:, i, self.land_masks[var]] = float("nan")
-        elif torch.isnan(x_spatial).any():
-            raise RuntimeError(
-                "land_fill_mode='nearest' but the input has NaN values -- "
-                "land pixels should already be filled with real values."
-            )
 
         if self.normalize:
             x_spatial = (x_spatial - self.input_means) / self.input_stds

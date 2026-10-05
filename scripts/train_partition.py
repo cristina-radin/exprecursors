@@ -129,6 +129,12 @@ def main():
     with open(args.config) as f:
         config = yaml.safe_load(f)
 
+    if config["in_channels"] != len(config["variables"]):
+        raise ValueError(
+            f"in_channels={config['in_channels']} does not match "
+            f"len(variables)={len(config['variables'])}"
+        )
+
     pl.seed_everything(config["seed"])
     torch.set_float32_matmul_precision("medium")
 
