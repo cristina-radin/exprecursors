@@ -5,7 +5,8 @@ Architecture:
   1. CNN encoder: each spatial frame (n_vars, lat, lon) → feature vector
   2. LSTM:        sequence of feature vectors (window_size,) → hidden state
                   (last timestep is used)
-  3. FC head:     hidden state → scalar prediction
+  3. Two heads on the hidden state: one predicts [mean, log_var] (or just
+     mean), the other an auxiliary conditional quantile of the target.
 """
 
 import math
@@ -146,15 +147,10 @@ class CNNLSTMModel(nn.Module):
             nn.Linear(64, out_dim),
         )
 
-        # Independent auxiliary head: predicts a single conditional quantile
-        # of the target (tau set by the caller's pinball loss, e.g. 0.9).
-        # Own parameters, no weight sharing with self.fc — only the backbone
-        # (cnn_encoder / lstm) is shared, so a pinball-loss
-        # gradient on this head's output never reaches self.fc's mean/log_var
-        # and vice versa. NOT the same thing as Hobday's p90_thresh (a fixed
-        # climatological, day-of-year threshold defined in src/utils/hobday.py)
-        # — this is a per-timestep model output. Call it `quantile_pred` /
-        # `pred_quantile`, never `p90`/`q90`, in any downstream eval code.
+        # Independent auxiliary head: predicts a conditional quantile of the
+        # target (tau is set by the caller's pinball loss). Shares the CNN
+        # and LSTM backbone with self.fc but has its own parameters, so a
+        # pinball-loss gradient here never reaches self.fc.
         if quantile_head:
             self.quantile_head = nn.Sequential(
                 nn.Linear(context_dim, 64),
@@ -164,12 +160,8 @@ class CNNLSTMModel(nn.Module):
             )
 
     def _encode(self, x_spatial: torch.Tensor) -> torch.Tensor:
-        """Backbone: x_spatial -> feature vector, fed into self.fc and (if
-        enabled) self.quantile_head. Single source for this computation —
-        forward() and forward_with_quantile() both call this instead of
-        each keeping their own copy, so a future backbone change (new
-        layer, dropout, etc.) can't silently diverge between the two entry
-        points.
+        """Runs the CNN encoder frame-by-frame then the LSTM over the
+        resulting sequence, returning the last timestep's hidden state.
 
         Args:
             x_spatial: (batch, window_size, n_vars, lat, lon)
@@ -194,7 +186,7 @@ class CNNLSTMModel(nn.Module):
             (batch, 2) — [mean, log_var] if gaussian_nll else (batch, 1) — [mean]
         """
         combined = self._encode(x_spatial)
-        return self.fc(combined)  # (batch, 1)
+        return self.fc(combined)  # (batch, 2) if gaussian_nll else (batch, 1)
 
     def forward_with_quantile(self, x_spatial: torch.Tensor):
         """Like forward(), but also returns the auxiliary quantile head's
@@ -319,20 +311,16 @@ class CNNLightningModule(pl.LightningModule):
         return self.loss_fn(y_hat, y), y_hat
 
     def _forward_dual(self, x_spatial):
-        """Returns (y_hat, q_pred). q_pred is None unless quantile_head=True.
-        y_hat is identical either way — forward_with_quantile() recomputes
-        the same self.fc(combined) as forward(), just also returns the
-        independent quantile head's output alongside it."""
+        """Runs the model and returns (y_hat, q_pred): q_pred is the
+        quantile head's output if quantile_head=True, else None."""
         if self.quantile_head:
             return self.model.forward_with_quantile(x_spatial.float())
         return self(x_spatial), None
 
     def _step(self, batch, split: str):
-        """Shared step logic. loss = NLL(mean, log_var) [+ quantile_weight *
-        pinball(q_pred, y, tau) if quantile_head]. The quantile_head term
-        depends on a disjoint parameter set (self.model.fc vs.
-        self.model.quantile_head), so that sum does not blend gradients
-        into either head — it only combines them at the shared backbone."""
+        """Runs one forward pass and computes the loss: NLL(mean, log_var),
+        plus quantile_weight * pinball(q_pred, y, tau) if quantile_head is
+        enabled. Returns (loss, pred, y)."""
         x_spatial, y = batch
         y_hat, q_pred = self._forward_dual(x_spatial)
         loss, pred = self._loss_and_pred(y_hat, y)
@@ -356,12 +344,8 @@ class CNNLightningModule(pl.LightningModule):
         return loss
 
     def on_test_epoch_start(self):
-        # Each fold is its own SLURM process today, so this never actually
-        # accumulates across folds — but trainer.test() can be called more
-        # than once in the same process (e.g. a notebook or an ensemble
-        # script), and without this reset test_preds/test_targets would
-        # silently grow across calls instead of reflecting just the latest
-        # test pass.
+        # Reset so repeated trainer.test() calls in the same process don't
+        # accumulate predictions across runs.
         self.test_preds = []
         self.test_targets = []
 
@@ -422,20 +406,8 @@ class CNNLightningModule(pl.LightningModule):
             self.parameters(), lr=self.learning_rate, weight_decay=1e-4
         )
         # Linear warmup for warmup_epochs, then cosine decay to 0 over the
-        # remaining epochs. max_epochs is cosine_t_max_epochs if set (the
-        # realistic expected training length), else the attached Trainer's
-        # max_epochs -- which is usually an early-stopping ceiling far
-        # longer than any real run, so cosine_t_max_epochs should be set
-        # explicitly whenever the real length is known.
-        if self.cosine_t_max_epochs is not None:
-            max_epochs = self.cosine_t_max_epochs
-        elif self.trainer is not None:
-            max_epochs = self.trainer.max_epochs
-        else:
-            raise RuntimeError(
-                "cosine_t_max_epochs is not set and no Trainer is attached -- "
-                "need one of the two to pick the decay horizon."
-            )
+        # remaining cosine_t_max_epochs.
+        max_epochs = self.cosine_t_max_epochs
         warmup = self.warmup_epochs
 
         def lr_lambda(epoch: int) -> float:
