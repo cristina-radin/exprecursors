@@ -98,8 +98,8 @@ class CNNLSTMModel(nn.Module):
         lstm_hidden:  LSTM hidden size
         lstm_layers:  number of LSTM layers
         dropout:      dropout in LSTM
-        pooling:      "max" (default) or "avg" — see CNNEncoder docstring
-        padding_mode: "zeros" (default) or "reflect" — see CNNEncoder docstring
+        pooling:      "max" or "avg" — see CNNEncoder docstring
+        padding_mode: "zeros" or "reflect" — see CNNEncoder docstring
     """
 
     def __init__(
