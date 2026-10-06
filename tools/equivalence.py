@@ -17,14 +17,10 @@ test samples and stores the model outputs (mean, log_var, q_pred) and the
 training-step loss, plus the inputs that produced them (hash of the input
 tensor, normalisation constants, sample indices, checkpoint hash) so that a
 mismatch can be attributed to data, weights or model code.
-
-It only uses code paths that survive the planned simplifications: constructor
-arguments are filtered by signature.
 """
 
 import argparse
 import hashlib
-import inspect
 import os
 import sys
 from pathlib import Path
@@ -87,11 +83,6 @@ REMOVED_INERT_KEYS = {
 }
 
 
-def _filter(callable_, kwargs):
-    params = inspect.signature(callable_).parameters
-    return {k: v for k, v in kwargs.items() if k in params}
-
-
 def model_kwargs(cfg):
     return dict(
         in_channels=cfg["in_channels"],
@@ -109,7 +100,7 @@ def model_kwargs(cfg):
 def build_model(kwargs):
     from src.models.cnn_lstm import CNNLSTMModel
 
-    return CNNLSTMModel(**_filter(CNNLSTMModel.__init__, kwargs))
+    return CNNLSTMModel(**kwargs)
 
 
 def load_reference_checkpoint(cfg):
@@ -174,7 +165,7 @@ def build_module(cfg, model, dm):
         warmup_epochs=cfg["warmup_epochs"],
         cosine_t_max_epochs=cfg["cosine_t_max_epochs"],
     )
-    return CNNLightningModule(**_filter(CNNLightningModule.__init__, kwargs))
+    return CNNLightningModule(**kwargs)
 
 
 def setup_datamodule():
