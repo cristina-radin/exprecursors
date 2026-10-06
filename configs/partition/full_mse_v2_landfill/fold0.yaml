@@ -1,0 +1,40 @@
+# Input/output locations come from the environment, not from this file:
+#   data:    $MHW_DATA_FILE (merged_daily.nc), $MHW_CLIM_FILE (sst_climatology_doy.nc)
+#   outputs: $MHW_EXPERIMENTS_DIR/partition/<run_name>
+variables:
+- ptho_bot
+- u10
+- v10
+- msl
+- ssr
+ocean_variables:
+- ptho_bot
+in_channels: 5
+pooling: avg
+padding_mode: reflect
+gaussian_nll: false
+quantile_head: false
+quantile_tau: 0.9
+quantile_weight: 0.3
+hobday_smooth_target: true
+split_mode: stratified_kfold
+n_folds: 5
+fold: 0
+seed: 42
+run_name: TbotAtm_full_mse_v2_landfill_seed42_fold0
+normalize: true
+loss_fn: MSELoss
+num_workers: 4
+cnn_features: 256
+lstm_hidden: 512
+lstm_layers: 2
+dropout: 0.2
+learning_rate: 0.00005
+lr_scheduler: cosine
+warmup_epochs: 5
+cosine_t_max_epochs: 60
+batch_size: 16
+max_epochs: 1000
+window_size: 60
+lead_time: 7
+land_fill_mode: nearest
