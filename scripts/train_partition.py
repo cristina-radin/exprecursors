@@ -110,6 +110,24 @@ class LossCurvePlotCallback(Callback):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+
+def _require_clean_output_dir(output_dir: Path, fast_dev_run: int) -> None:
+    """Raise if output_dir/checkpoints already has a .ckpt file from an
+    earlier run -- best_ckpt() picks the lowest val_loss across the whole
+    directory and would silently mix runs. fast_dev_run never writes
+    checkpoints, so it is exempt.
+    """
+    if fast_dev_run:
+        return
+    existing = list((output_dir / "checkpoints").glob("*.ckpt"))
+    if existing:
+        raise RuntimeError(
+            f"{output_dir / 'checkpoints'} already has {len(existing)} "
+            f"checkpoint(s) from a previous run: "
+            f"{[c.name for c in existing]}. Use a clean output_dir."
+        )
+
+
 MODE_MAP = {
     "full": CNNLightningModule,
     "remote_only": RemoteOnlyLightningModule,
@@ -140,6 +158,7 @@ def main():
 
     output_dir = EXPERIMENTS_DIR / "partition" / config["run_name"]
     output_dir.mkdir(parents=True, exist_ok=True)
+    _require_clean_output_dir(output_dir, args.fast_dev_run)
 
     # Print and save the exact resolved config this run is using, both in
     # the SLURM/stdout log and as a standalone file in output_dir (survives

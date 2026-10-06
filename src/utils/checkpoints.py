@@ -8,10 +8,7 @@ from pathlib import Path
 from src.models.cnn_lstm import CNNLSTMModel
 
 # Exact CNNLSTMModel.__init__ keyword arguments, read from the constructor's
-# own signature so this list can never drift from what CNNLSTMModel actually
-# takes (it used to be a hand-maintained dict with its own defaults, which is
-# how it silently fell out of sync when arch/temporal_features/state_feature
-# were removed from the constructor).
+# own signature so this list can never drift from what CNNLSTMModel takes.
 CNNLSTM_MODEL_KEYS = tuple(
     name
     for name in inspect.signature(CNNLSTMModel.__init__).parameters
@@ -20,19 +17,12 @@ CNNLSTM_MODEL_KEYS = tuple(
 
 
 def save_model_config(output_dir: Path, **kwargs) -> None:
-    """Write the exact resolved CNNLSTMModel kwargs used for this run to
-    output_dir/model_config.json — the single source of truth for
-    reconstructing this checkpoint's architecture.
-
-    Call with the same dict used to build the model (e.g.
-    `CNNLSTMModel(**model_kwargs)` then `save_model_config(output_dir,
-    **model_kwargs)`) so the recorded config can never drift from what was
-    actually trained. Every eval/XAI script should read it back via
-    load_model_config() instead of independently calling
-    `cfg.get("quantile_head", False)` etc. — that per-script duplication is
-    what caused the quantile_head silent-weight-drop bug (docs/narrative.md,
-    Aug 19 2026): nine scripts each guessed their own defaults and none of
-    them matched what train_partition.py actually built.
+    """Write the exact CNNLSTMModel kwargs used for this run to
+    output_dir/model_config.json, so the architecture can always be
+    reconstructed exactly as trained, instead of each eval/XAI script
+    independently re-deriving it. Call with the same kwargs dict used to
+    build the model (e.g. `CNNLSTMModel(**model_kwargs)` then
+    `save_model_config(output_dir, **model_kwargs)`).
     """
     missing = [k for k in CNNLSTM_MODEL_KEYS if k not in kwargs]
     if missing:
@@ -66,12 +56,23 @@ def load_model_config(run_dir: Path) -> dict:
 
 
 def best_ckpt(ckpt_dir: Path) -> Path:
-    """Return the checkpoint with lowest val_loss, skipping -v1/-v2 duplicates."""
-    ckpts = [
-        c
-        for c in Path(ckpt_dir).glob("*.ckpt")
-        if not re.search(r"-v\d+\.ckpt$", str(c))
+    """Return the checkpoint with the lowest val_loss in ckpt_dir. Raises if
+    ckpt_dir mixes checkpoints from more than one training run (any
+    "-vN.ckpt" file -- PyTorch Lightning adds that suffix instead of
+    overwriting when a filename already exists) or has no checkpoints at
+    all.
+    """
+    ckpt_dir = Path(ckpt_dir)
+    duplicates = [
+        c for c in ckpt_dir.glob("*.ckpt") if re.search(r"-v\d+\.ckpt$", c.name)
     ]
+    if duplicates:
+        raise ValueError(
+            f"{ckpt_dir} contains checkpoints from more than one training "
+            f"run: {[c.name for c in duplicates]}. Use a clean output_dir."
+        )
+
+    ckpts = list(ckpt_dir.glob("*.ckpt"))
     if not ckpts:
         raise FileNotFoundError(f"No checkpoints in {ckpt_dir}")
 
@@ -79,8 +80,7 @@ def best_ckpt(ckpt_dir: Path) -> Path:
         m = re.search(r"val_loss=([-\d.]+?)\.ckpt", c.name)
         if not m:
             raise ValueError(
-                f"Could not parse val_loss from checkpoint filename {c.name!r} "
-                f"— refusing to silently rank it as worst (known_issues.md #11)."
+                f"Could not parse val_loss from checkpoint filename {c.name!r}."
             )
         return float(m.group(1).rstrip("."))
 

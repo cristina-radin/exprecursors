@@ -124,3 +124,13 @@ def test_best_ckpt_raises_on_non_matching_filename(tmp_path):
 def test_best_ckpt_empty_directory_raises(tmp_path):
     with pytest.raises(FileNotFoundError, match="No checkpoints"):
         best_ckpt(tmp_path)
+
+
+def test_best_ckpt_raises_on_duplicate_suffix(tmp_path):
+    # A "-vN.ckpt" file means ckpt_dir has checkpoints from more than one
+    # training run (known_issues.md #58) -- best_ckpt() must refuse to pick
+    # among them instead of silently skipping the duplicate.
+    _touch(tmp_path, "cnn-lstm-epoch=05-val_loss=0.5000.ckpt")
+    _touch(tmp_path, "cnn-lstm-epoch=05-val_loss=0.5000-v1.ckpt")
+    with pytest.raises(ValueError, match="more than one training"):
+        best_ckpt(tmp_path)
