@@ -6,10 +6,12 @@ state_feature were removed from the constructor but not from
 CNNLSTM_DEFAULTS (docs/open_issues.md).
 """
 
+import json
+
 import pytest
 
 from src.models.cnn_lstm import CNNLSTMModel
-from src.utils.checkpoints import load_model_config, save_model_config
+from src.utils.checkpoints import best_ckpt, load_model_config, save_model_config
 
 VARIANTS = [
     dict(gaussian_nll=True, quantile_head=True),
@@ -70,3 +72,55 @@ def test_load_model_config_missing_key_in_json_raises(tmp_path):
     )
     with pytest.raises(ValueError, match="missing required keys"):
         load_model_config(tmp_path)
+
+
+def test_load_model_config_extra_key_in_json_raises(tmp_path):
+    kwargs = _model_kwargs(gaussian_nll=True, quantile_head=True)
+    save_model_config(tmp_path, **kwargs)
+    path = tmp_path / "model_config.json"
+    saved = json.loads(path.read_text())
+    saved["arch"] = "lstm_only"
+    path.write_text(json.dumps(saved))
+    with pytest.raises(ValueError, match="unexpected keys"):
+        load_model_config(tmp_path)
+
+
+# ── best_ckpt() ───────────────────────────────────────────────────────────────
+
+
+def _touch(tmp_path, name):
+    (tmp_path / name).touch()
+
+
+def test_best_ckpt_picks_lowest_val_loss(tmp_path):
+    _touch(tmp_path, "cnn-lstm-epoch=05-val_loss=0.5000.ckpt")
+    _touch(tmp_path, "cnn-lstm-epoch=10-val_loss=0.1399.ckpt")
+    _touch(tmp_path, "cnn-lstm-epoch=15-val_loss=0.9000.ckpt")
+    assert best_ckpt(tmp_path).name == "cnn-lstm-epoch=10-val_loss=0.1399.ckpt"
+
+
+def test_best_ckpt_handles_negative_val_loss(tmp_path):
+    _touch(tmp_path, "cnn-lstm-epoch=05-val_loss=-2.5000.ckpt")
+    _touch(tmp_path, "cnn-lstm-epoch=10-val_loss=0.1399.ckpt")
+    assert best_ckpt(tmp_path).name == "cnn-lstm-epoch=05-val_loss=-2.5000.ckpt"
+
+
+def test_best_ckpt_parses_val_loss_with_decimal_point_correctly(tmp_path):
+    # known_issues.md #3: the regex must extract exactly "0.1399", not stop
+    # early at the decimal point or swallow it into the trailing ".ckpt".
+    _touch(tmp_path, "cnn-lstm-epoch=05-val_loss=0.1399.ckpt")
+    ckpt = best_ckpt(tmp_path)
+    assert ckpt.name == "cnn-lstm-epoch=05-val_loss=0.1399.ckpt"
+
+
+def test_best_ckpt_raises_on_non_matching_filename(tmp_path):
+    # known_issues.md #35: a filename the regex can't parse must raise, not
+    # silently rank as float("inf") / worst.
+    _touch(tmp_path, "some-checkpoint-without-val-loss-in-the-name.ckpt")
+    with pytest.raises(ValueError, match="Could not parse val_loss"):
+        best_ckpt(tmp_path)
+
+
+def test_best_ckpt_empty_directory_raises(tmp_path):
+    with pytest.raises(FileNotFoundError, match="No checkpoints"):
+        best_ckpt(tmp_path)
