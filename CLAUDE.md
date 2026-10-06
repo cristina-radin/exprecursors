@@ -8,7 +8,13 @@ or figure of the paper comes out of here?". Exploratory work goes in `sandbox/`.
 No code change without the owner's explicit approval in that same turn, even if
 it belongs to a step already described. Every code change in `rebuild` must
 pass `tools/equivalence.py --check` before commit. If it does not pass, stop
-and report.
+and report. One test file per source file. Parametrise inside it; do not add
+test files per experiment. A new experiment is a new yaml, never a new script.
+No new script without first stating which paper figure or number it produces.
+Budget: 15-20 code files for the whole paper. If a change would exceed it,
+stop and ask. The equivalence harness only proves that the trained model's
+predictions are unchanged. Any change to training code also needs the smoke
+test.
 
 ## Critical conventions
 - **Valid data**: `$MHW_DATA_FILE` -> `merged_daily.nc`. Never a file with `_OLD`
