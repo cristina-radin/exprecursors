@@ -1,27 +1,22 @@
 """Checkpoint selection utilities."""
 
+import inspect
 import json
 import re
 from pathlib import Path
 
-# Exact CNNLSTMModel.__init__ kwargs (minus in_channels, required separately).
-# Defaults here MUST match CNNLSTMModel's own defaults — this is the one
-# place both save_model_config's fallback and every legacy caller derive
-# them from, instead of each eval/XAI script re-guessing its own.
-CNNLSTM_DEFAULTS = {
-    "cnn_features": 128,
-    "lstm_hidden": 256,
-    "lstm_layers": 2,
-    "temporal_features": 3,
-    "dropout": 0.3,
-    "arch": "lstm_only",
-    "gaussian_nll": False,
-    "pooling": "max",
-    "quantile_head": False,
-    "padding_mode": "zeros",
-    "state_feature": False,
-}
-CNNLSTM_MODEL_KEYS = ("in_channels",) + tuple(CNNLSTM_DEFAULTS)
+from src.models.cnn_lstm import CNNLSTMModel
+
+# Exact CNNLSTMModel.__init__ keyword arguments, read from the constructor's
+# own signature so this list can never drift from what CNNLSTMModel actually
+# takes (it used to be a hand-maintained dict with its own defaults, which is
+# how it silently fell out of sync when arch/temporal_features/state_feature
+# were removed from the constructor).
+CNNLSTM_MODEL_KEYS = tuple(
+    name
+    for name in inspect.signature(CNNLSTMModel.__init__).parameters
+    if name != "self"
+)
 
 
 def save_model_config(output_dir: Path, **kwargs) -> None:
@@ -42,34 +37,32 @@ def save_model_config(output_dir: Path, **kwargs) -> None:
     missing = [k for k in CNNLSTM_MODEL_KEYS if k not in kwargs]
     if missing:
         raise ValueError(f"save_model_config missing required keys: {missing}")
+    extra = [k for k in kwargs if k not in CNNLSTM_MODEL_KEYS]
+    if extra:
+        raise ValueError(f"save_model_config got unexpected keys: {extra}")
     path = Path(output_dir) / "model_config.json"
     with open(path, "w") as f:
         json.dump({k: kwargs[k] for k in CNNLSTM_MODEL_KEYS}, f, indent=2)
 
 
-def load_model_config(run_dir: Path, fallback_cfg: dict = None) -> dict:
-    """Return the exact CNNLSTMModel kwargs for the run in run_dir.
-
-    Prefers run_dir/model_config.json (written by save_model_config at train
-    time — the ground truth). Falls back to deriving kwargs from
-    fallback_cfg (a raw fold{N}.yaml dict) using CNNLSTM_DEFAULTS, for runs
-    that predate model_config.json. Pass fallback_cfg=None to require the
-    file to exist (e.g. once all active runs have one) instead of silently
-    re-deriving defaults.
+def load_model_config(run_dir: Path) -> dict:
+    """Return the exact CNNLSTMModel kwargs for the run in run_dir, read
+    from run_dir/model_config.json (written by save_model_config at train
+    time). Raises if the file is missing a key CNNLSTMModel needs, or has
+    an extra one — no defaults are filled in.
     """
     path = Path(run_dir) / "model_config.json"
-    if path.exists():
-        with open(path) as f:
-            return json.load(f)
-    if fallback_cfg is None:
-        raise FileNotFoundError(
-            f"{path} not found and no fallback_cfg given — this run predates "
-            "model_config.json and there is no config to derive defaults from."
-        )
-    resolved = {"in_channels": fallback_cfg["in_channels"]}
-    for key, default in CNNLSTM_DEFAULTS.items():
-        resolved[key] = fallback_cfg.get(key, default)
-    return resolved
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found.")
+    with open(path) as f:
+        saved = json.load(f)
+    missing = [k for k in CNNLSTM_MODEL_KEYS if k not in saved]
+    if missing:
+        raise ValueError(f"{path} is missing required keys: {missing}")
+    extra = [k for k in saved if k not in CNNLSTM_MODEL_KEYS]
+    if extra:
+        raise ValueError(f"{path} has unexpected keys: {extra}")
+    return saved
 
 
 def best_ckpt(ckpt_dir: Path) -> Path:
