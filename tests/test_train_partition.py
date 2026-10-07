@@ -9,6 +9,9 @@ saves checkpoints.
 
 _resolve_fold: fold comes from --fold only (never the yaml), and must be a
 valid fold for n_folds.
+
+_apply_limit_batches_suffix: a --limit_batches run's run_name gets a
+"_limit{N}" suffix, so it can never collide with a real run's output_dir.
 """
 
 import sys
@@ -17,7 +20,11 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from scripts.train_partition import _require_clean_output_dir, _resolve_fold
+from scripts.train_partition import (
+    _apply_limit_batches_suffix,
+    _require_clean_output_dir,
+    _resolve_fold,
+)
 
 
 def test_raises_when_checkpoints_exist(tmp_path):
@@ -71,3 +78,18 @@ def test_resolve_fold_accepts_every_valid_fold():
         cfg = _cfg()
         _resolve_fold(cfg, fold)
         assert cfg["fold"] == fold
+
+
+# ── _apply_limit_batches_suffix ───────────────────────────────────────────────
+
+
+def test_limit_batches_suffix_applied_when_positive():
+    cfg = _cfg(run_name="gnll_quantile_fold0")
+    _apply_limit_batches_suffix(cfg, 5)
+    assert cfg["run_name"] == "gnll_quantile_fold0_limit5"
+
+
+def test_limit_batches_suffix_not_applied_when_zero():
+    cfg = _cfg(run_name="gnll_quantile_fold0")
+    _apply_limit_batches_suffix(cfg, 0)
+    assert cfg["run_name"] == "gnll_quantile_fold0"

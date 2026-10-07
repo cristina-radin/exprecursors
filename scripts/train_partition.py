@@ -73,6 +73,15 @@ def _resolve_fold(config: dict, fold: int) -> None:
     config["run_name"] = f"{config['run_name']}_fold{fold}"
 
 
+def _apply_limit_batches_suffix(config: dict, limit_batches: int) -> None:
+    """Append "_limit{N}" to run_name when --limit_batches is active, so a
+    short smoke/debug run can never collide with (or trip
+    _require_clean_output_dir against) a real training's output_dir.
+    """
+    if limit_batches > 0:
+        config["run_name"] = f"{config['run_name']}_limit{limit_batches}"
+
+
 def _git_commit() -> str:
     proc = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True
@@ -174,6 +183,7 @@ def main():
         config = yaml.safe_load(f)
 
     _resolve_fold(config, args.fold)
+    _apply_limit_batches_suffix(config, args.limit_batches)
 
     if config["in_channels"] != len(config["variables"]):
         raise ValueError(

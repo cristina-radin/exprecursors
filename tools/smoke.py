@@ -131,13 +131,17 @@ def main():
 
         quantile_cfg = _load(BASE_CONFIGS["full_gnll_quantile"])
 
+        # train_partition.py appends "_fold0" (--fold) and, since
+        # --limit_batches 1 is always on below, "_limit1" too.
+        run_suffix = "_fold0_limit1"
+
         cases = []
         for label, path in BASE_CONFIGS.items():
             cfg = _load(path)
             cfg["max_epochs"] = 1
             cfg_path = tmp / f"{label}.yaml"
             _write(cfg, cfg_path)
-            cases.append((label, cfg_path, f"{cfg['run_name']}_fold0"))
+            cases.append((label, cfg_path, f"{cfg['run_name']}{run_suffix}"))
 
         local_cfg = copy.deepcopy(quantile_cfg)
         local_cfg["run_name"] = "smoke_local_only"
@@ -145,7 +149,7 @@ def main():
         local_cfg["max_epochs"] = 1
         local_path = tmp / "local_only.yaml"
         _write(local_cfg, local_path)
-        cases.append(("local_only", local_path, f"{local_cfg['run_name']}_fold0"))
+        cases.append(("local_only", local_path, f"{local_cfg['run_name']}{run_suffix}"))
 
         remote_cfg = copy.deepcopy(quantile_cfg)
         remote_cfg["run_name"] = "smoke_remote_only"
@@ -153,7 +157,7 @@ def main():
         remote_cfg["max_epochs"] = 1
         remote_path = tmp / "remote_only.yaml"
         _write(remote_cfg, remote_path)
-        cases.append(("remote_only", remote_path, f"{remote_cfg['run_name']}_fold0"))
+        cases.append(("remote_only", remote_path, f"{remote_cfg['run_name']}{run_suffix}"))
 
         zero_cfg = copy.deepcopy(quantile_cfg)
         zero_cfg["run_name"] = "smoke_zero_fill"
@@ -161,7 +165,7 @@ def main():
         zero_cfg["max_epochs"] = 1
         zero_path = tmp / "zero_fill.yaml"
         _write(zero_cfg, zero_path)
-        cases.append(("zero_fill", zero_path, f"{zero_cfg['run_name']}_fold0"))
+        cases.append(("zero_fill", zero_path, f"{zero_cfg['run_name']}{run_suffix}"))
 
         results = []
         for label, config_path, run_name in cases:
