@@ -19,7 +19,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xarray as xr
-import yaml
 
 TMP = Path(tempfile.mkdtemp(prefix="mhw_synthetic_"))
 DATA_FILE = TMP / "merged_daily.nc"
@@ -102,8 +101,10 @@ _build_data_file(DATA_FILE_NO_TBOTTOM, with_tbottom=False)
 _build_clim_file(CLIM_FILE)
 
 
-def write_config(directory: Path, name: str = "cfg.yaml", **overrides) -> str:
-    """Write a minimal training-style yaml (defaults match the synthetic grid)."""
+def write_config(**overrides) -> dict:
+    """A minimal training-style config dict (defaults match the synthetic
+    grid). LazyDataset/LazyDataModule take this dict directly -- no file
+    involved."""
     cfg = dict(
         variables=VARIABLES,
         ocean_variables=["ptho_bot"],
@@ -120,6 +121,4 @@ def write_config(directory: Path, name: str = "cfg.yaml", **overrides) -> str:
         hobday_smooth_target=False,
     )
     cfg.update(overrides)
-    path = Path(directory) / name
-    path.write_text(yaml.safe_dump(cfg))
-    return str(path)
+    return cfg

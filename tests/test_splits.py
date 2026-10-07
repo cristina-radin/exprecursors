@@ -17,9 +17,9 @@ from tests import synthetic as syn
 N_FOLDS = 5
 
 
-def _setup(tmp_path, fold, **overrides):
-    cfg = syn.write_config(tmp_path, f"fold{fold}.yaml", fold=fold, **overrides)
-    dm = LazyDataModule(config_path=cfg)
+def _setup(fold, **overrides):
+    cfg = syn.write_config(fold=fold, **overrides)
+    dm = LazyDataModule(config=cfg)
     dm.setup()
     return dm
 
@@ -40,9 +40,8 @@ def _fold_years(dm):
 
 
 @pytest.fixture(scope="module")
-def folds(tmp_path_factory):
-    tmp = tmp_path_factory.mktemp("splits")
-    return [_fold_years(_setup(tmp, f)) for f in range(N_FOLDS)]
+def folds():
+    return [_fold_years(_setup(f)) for f in range(N_FOLDS)]
 
 
 def test_train_val_test_disjoint_within_fold(folds):
@@ -69,11 +68,11 @@ def test_val_years_differ_per_fold(folds):
     assert len(set(vals)) == N_FOLDS
 
 
-def test_split_is_deterministic(tmp_path, folds):
-    assert _fold_years(_setup(tmp_path, 2)) == folds[2]
+def test_split_is_deterministic(folds):
+    assert _fold_years(_setup(2)) == folds[2]
 
 
-def test_data_dir_key_is_rejected(tmp_path):
-    cfg = syn.write_config(tmp_path, data_dir=str(syn.DATA_FILE))
+def test_data_dir_key_is_rejected():
+    cfg = syn.write_config(data_dir=str(syn.DATA_FILE))
     with pytest.raises(ValueError, match="MHW_DATA_FILE"):
-        LazyDataModule(config_path=cfg)
+        LazyDataModule(config=cfg)

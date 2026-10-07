@@ -11,7 +11,6 @@ does not subtract any further climatology.
 import numpy as np
 import torch
 import xarray as xr
-import yaml
 from torch.utils.data import Dataset
 
 
@@ -29,12 +28,9 @@ class LazyDataset(Dataset):
     def __init__(
         self,
         file_name: str,
-        config_path: str = "config.yaml",
+        config: dict,
     ):
         super().__init__()
-
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
 
         self.file_name = file_name
         self.variables = config["variables"]

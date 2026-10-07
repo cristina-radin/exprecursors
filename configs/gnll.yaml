@@ -14,15 +14,14 @@ mode: full
 pooling: avg
 padding_mode: reflect
 gaussian_nll: true
-quantile_head: true
+quantile_head: false
 quantile_tau: 0.9
 quantile_weight: 0.3
 hobday_smooth_target: true
 split_mode: stratified_kfold
 n_folds: 5
-fold: 0
 seed: 42
-run_name: TbotAtm_full_gnll_quantile_v2_landfill_seed42_fold0
+run_name: gnll
 normalize: true
 loss_fn: GaussianNLLLoss
 num_workers: 4

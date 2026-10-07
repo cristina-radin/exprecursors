@@ -8,10 +8,11 @@ docs/open_issues.md).
 
 Six cases: the three committed loss variants with mode: full, plus
 mode: local_only and mode: remote_only with the committed loss
-(full_gnll_quantile_v2_landfill), plus land_fill_mode: zero with mode: full.
-Every case gets its own temporary yaml (run_name + max_epochs: 1 override,
-and mode/land_fill_mode for the three non-base cases) so none of them touch
-the real committed yaml files, configs/, or sandbox/.
+(configs/gnll_quantile.yaml), plus land_fill_mode: zero with mode: full.
+Every case gets its own temporary yaml (max_epochs: 1 override, and
+run_name/mode/land_fill_mode for the three non-base cases) so none of them
+touch the real committed yaml files, configs/, or sandbox/. Fold is always 0
+(train_partition.py's --fold); it appends "_fold0" to run_name itself.
 
 After each case, checks that output_dir has: a checkpoint, metrics.csv,
 resolved_config.yaml, model_config.json, test_metrics.json,
@@ -42,10 +43,9 @@ REPO = Path(__file__).resolve().parents[1]
 TRAIN_SCRIPT = REPO / "scripts" / "train_partition.py"
 
 BASE_CONFIGS = {
-    "full_gnll_quantile": REPO
-    / "configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml",
-    "full_gnll_only": REPO / "configs/partition/full_gnll_v2_landfill/fold0.yaml",
-    "full_mse": REPO / "configs/partition/full_mse_v2_landfill/fold0.yaml",
+    "full_gnll_quantile": REPO / "configs/gnll_quantile.yaml",
+    "full_gnll_only": REPO / "configs/gnll.yaml",
+    "full_mse": REPO / "configs/mse.yaml",
 }
 
 
@@ -67,6 +67,8 @@ def _run_case(config_path, env):
             str(TRAIN_SCRIPT),
             "--config",
             str(config_path),
+            "--fold",
+            "0",
             "--limit_batches",
             "1",
         ],
@@ -135,31 +137,31 @@ def main():
             cfg["max_epochs"] = 1
             cfg_path = tmp / f"{label}.yaml"
             _write(cfg, cfg_path)
-            cases.append((label, cfg_path, cfg["run_name"]))
+            cases.append((label, cfg_path, f"{cfg['run_name']}_fold0"))
 
         local_cfg = copy.deepcopy(quantile_cfg)
-        local_cfg["run_name"] = "smoke_local_only_fold0"
+        local_cfg["run_name"] = "smoke_local_only"
         local_cfg["mode"] = "local_only"
         local_cfg["max_epochs"] = 1
         local_path = tmp / "local_only.yaml"
         _write(local_cfg, local_path)
-        cases.append(("local_only", local_path, local_cfg["run_name"]))
+        cases.append(("local_only", local_path, f"{local_cfg['run_name']}_fold0"))
 
         remote_cfg = copy.deepcopy(quantile_cfg)
-        remote_cfg["run_name"] = "smoke_remote_only_fold0"
+        remote_cfg["run_name"] = "smoke_remote_only"
         remote_cfg["mode"] = "remote_only"
         remote_cfg["max_epochs"] = 1
         remote_path = tmp / "remote_only.yaml"
         _write(remote_cfg, remote_path)
-        cases.append(("remote_only", remote_path, remote_cfg["run_name"]))
+        cases.append(("remote_only", remote_path, f"{remote_cfg['run_name']}_fold0"))
 
         zero_cfg = copy.deepcopy(quantile_cfg)
-        zero_cfg["run_name"] = "smoke_zero_fill_fold0"
+        zero_cfg["run_name"] = "smoke_zero_fill"
         zero_cfg["land_fill_mode"] = "zero"
         zero_cfg["max_epochs"] = 1
         zero_path = tmp / "zero_fill.yaml"
         _write(zero_cfg, zero_path)
-        cases.append(("zero_fill", zero_path, zero_cfg["run_name"]))
+        cases.append(("zero_fill", zero_path, f"{zero_cfg['run_name']}_fold0"))
 
         results = []
         for label, config_path, run_name in cases:

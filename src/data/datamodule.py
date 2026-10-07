@@ -12,7 +12,6 @@ from typing import Optional
 
 import numpy as np
 import pytorch_lightning as pl
-import yaml
 from torch.utils.data import DataLoader, Subset
 
 from src.utils.hobday import apply_hobday, load_ns_p90
@@ -62,13 +61,11 @@ class LazyDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        config_path: str = "config.yaml",
+        config: dict,
     ):
         super().__init__()
-        self.save_hyperparameters()
 
-        with open(config_path, "r") as f:
-            self.config = yaml.safe_load(f)
+        self.config = config
 
         if "data_dir" in self.config:
             raise ValueError(
@@ -95,7 +92,7 @@ class LazyDataModule(pl.LightningDataModule):
         if self.train_dataset is not None:
             return  # already set up — avoid reloading data on second call
 
-        full_ds = LazyDataset(self.data_dir, config_path=self.hparams.config_path)
+        full_ds = LazyDataset(self.data_dir, config=self.config)
         total_size = len(full_ds)
 
         fold = self.config["fold"]

@@ -1,6 +1,6 @@
 """
-Bit-for-bit equivalence harness for the committed model (fold0 of
-full_gnll_quantile_v2_landfill), on real data and the real trained checkpoint.
+Bit-for-bit equivalence harness for the committed model (fold 0 of
+configs/gnll_quantile.yaml), on real data and the real trained checkpoint.
 
   python tools/equivalence.py --generate   # write tools/reference/equivalence_fold0.npz
   python tools/equivalence.py --check      # recompute and compare with np.array_equal
@@ -10,13 +10,14 @@ MHW_REFERENCE_CKPT_DIR, a directory with exactly one *.ckpt (the best fold-0
 checkpoint) plus its model_config.json and resolved_config.yaml.
 
 Fixed seed, torch.use_deterministic_algorithms(True), CPU, 1 thread. It builds
-the model from fold0.yaml, checks that this equals the checkpoint's
-model_config.json key by key, loads the weights with strict=True, runs the real
-LazyDataModule.setup() (real split and normalisation statistics), takes 4 fixed
-test samples and stores the model outputs (mean, log_var, q_pred) and the
-training-step loss, plus the inputs that produced them (hash of the input
-tensor, normalisation constants, sample indices, checkpoint hash) so that a
-mismatch can be attributed to data, weights or model code.
+the model from CONFIG (fold injected, like train_partition.py's --fold),
+checks that this equals the checkpoint's model_config.json key by key, loads
+the weights with strict=True, runs the real LazyDataModule.setup() (real
+split and normalisation statistics), takes 4 fixed test samples and stores
+the model outputs (mean, log_var, q_pred) and the training-step loss, plus
+the inputs that produced them (hash of the input tensor, normalisation
+constants, sample indices, checkpoint hash) so that a mismatch can be
+attributed to data, weights or model code.
 """
 
 import argparse
@@ -34,19 +35,21 @@ from torch.utils.data import default_collate
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-CONFIG = REPO / "configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml"
+CONFIG = REPO / "configs/gnll_quantile.yaml"
+FOLD = 0  # this harness is pinned to the fold-0 reference checkpoint
 REFERENCE = REPO / "tools/reference/equivalence_fold0.npz"
 SAMPLE_POSITIONS = (0, 731, 1462, 2193)  # positions inside the fold-0 test set
 SEED = 42
-# yaml keys that legitimately differ between fold0.yaml and a run's
-# resolved_config.yaml (locations moved to environment variables).
+# yaml keys that legitimately differ between CONFIG and a run's
+# resolved_config.yaml (locations moved to environment variables; run_name
+# because train_partition.py appends "_fold{N}" to it).
 LOCATION_KEYS = {"data_dir", "output_dir", "run_name"}
-# Options removed from fold0.yaml because they had no effect on the committed
+# Options removed from CONFIG because they had no effect on the committed
 # model (dead/no-op code paths at the time this checkpoint was trained) -- see
 # docs/open_issues.md for why each one was inert. A key here may be absent
-# from the current fold0.yaml only if the checkpoint's own
-# resolved_config.yaml has exactly this value; any other value, or the key
-# still present with a different value, is an error like any other mismatch.
+# from the current CONFIG only if the checkpoint's own resolved_config.yaml
+# has exactly this value; any other value, or the key still present with a
+# different value, is an error like any other mismatch.
 REMOVED_INERT_KEYS = {
     # CNNLSTMModel no longer takes an arch argument: the attention_only and
     # lstm_attention branches were removed, lstm_only (what this checkpoint
@@ -81,10 +84,10 @@ REMOVED_INERT_KEYS = {
     # docs/open_issues.md). This checkpoint was trained with it off.
     "focal_weight": False,
 }
-# yaml keys added to fold0.yaml whose value was hardcoded in
+# yaml keys added to CONFIG whose value was hardcoded in
 # train_partition.py/cnn_lstm.py when the reference checkpoint was trained,
-# instead of being a config key. A key here may be present in fold0.yaml and
-# absent from the checkpoint's resolved_config.yaml only if fold0.yaml has
+# instead of being a config key. A key here may be present in CONFIG and
+# absent from the checkpoint's resolved_config.yaml only if CONFIG has
 # exactly this value; any other value is an error like any other mismatch.
 ADDED_KEYS = {
     "early_stopping_patience": 30,
@@ -118,7 +121,7 @@ def build_model(kwargs):
 def load_reference_checkpoint(cfg):
     """Return (ckpt path, sha256, checkpoint dict) after verifying that the
     checkpoint's model_config.json and resolved_config.yaml agree with
-    fold0.yaml. Raises on any difference."""
+    CONFIG. Raises on any difference."""
     import json
 
     var = "MHW_REFERENCE_CKPT_DIR"
@@ -149,15 +152,15 @@ def load_reference_checkpoint(cfg):
         if key not in cfg:
             if key in REMOVED_INERT_KEYS and resolved.get(key) == REMOVED_INERT_KEYS[key]:
                 continue
-            problems.append(f"resolved_config.yaml has {key}={resolved[key]!r}, fold0.yaml does not")
+            problems.append(f"resolved_config.yaml has {key}={resolved[key]!r}, CONFIG does not")
         elif key not in resolved:
             if key in ADDED_KEYS and cfg[key] == ADDED_KEYS[key]:
                 continue
-            problems.append(f"fold0.yaml has {key}={cfg[key]!r}, resolved_config.yaml does not")
+            problems.append(f"CONFIG has {key}={cfg[key]!r}, resolved_config.yaml does not")
         elif resolved[key] != cfg[key]:
-            problems.append(f"{key}: resolved={resolved[key]!r} fold0.yaml={cfg[key]!r}")
+            problems.append(f"{key}: resolved={resolved[key]!r} CONFIG={cfg[key]!r}")
     if problems:
-        raise ValueError("checkpoint does not match fold0.yaml:\n  " + "\n  ".join(problems))
+        raise ValueError("checkpoint does not match CONFIG:\n  " + "\n  ".join(problems))
 
     path = ckpts[0]
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -185,10 +188,10 @@ def build_module(cfg, model, dm):
     return CNNLightningModule(**kwargs)
 
 
-def setup_datamodule():
+def setup_datamodule(cfg):
     from src.data.datamodule import LazyDataModule
 
-    dm = LazyDataModule(config_path=str(CONFIG))
+    dm = LazyDataModule(config=cfg)
     dm.setup()
     return dm
 
@@ -268,9 +271,10 @@ def main():
     torch.use_deterministic_algorithms(True)
     torch.set_num_threads(1)
     cfg = yaml.safe_load(open(CONFIG))
+    cfg["fold"] = FOLD
 
     _, ckpt_sha, ckpt = load_reference_checkpoint(cfg)
-    dm = setup_datamodule()
+    dm = setup_datamodule(cfg)
     first = compute(dm, cfg, ckpt_sha, ckpt)
     second = compute(dm, cfg, ckpt_sha, ckpt)
     problems = diff(first, second)

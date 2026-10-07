@@ -19,9 +19,9 @@ from tests import synthetic as syn
 TRAIN_IDX = list(range(0, 1500))
 
 
-def _dataset(tmp_path, data_file=syn.DATA_FILE, **overrides):
-    cfg = syn.write_config(tmp_path, **overrides)
-    return LazyDataset(str(data_file), config_path=cfg)
+def _dataset(data_file=syn.DATA_FILE, **overrides):
+    cfg = syn.write_config(**overrides)
+    return LazyDataset(str(data_file), config=cfg)
 
 
 def _bool_mask(land_pixels):
@@ -34,8 +34,8 @@ def _bool_mask(land_pixels):
 # ── #2: per-variable land mask ──────────────────────────────────────────────
 
 
-def test_ptho_bot_uses_tbottom_mask(tmp_path):
-    ds = _dataset(tmp_path)
+def test_ptho_bot_uses_tbottom_mask():
+    ds = _dataset()
     expected = _bool_mask(syn.TBOTTOM_LAND_PIXELS)
     assert np.array_equal(ds.land_masks["ptho_bot"].numpy(), expected)
     # (2, 3) is land only in land_mask: must NOT be masked for ptho_bot
@@ -44,29 +44,29 @@ def test_ptho_bot_uses_tbottom_mask(tmp_path):
     assert ds.land_masks["ptho_bot"][4, 5]
 
 
-def test_other_ocean_variables_use_land_mask(tmp_path):
-    ds = _dataset(tmp_path, ocean_variables=["ptho_bot", "u10"])
+def test_other_ocean_variables_use_land_mask():
+    ds = _dataset(ocean_variables=["ptho_bot", "u10"])
     expected = _bool_mask(syn.LAND_MASK_LAND_PIXELS)
     assert np.array_equal(ds.land_masks["u10"].numpy(), expected)
     assert np.array_equal(ds.is_land.numpy(), expected)
 
 
-def test_missing_tbottom_mask_raises(tmp_path):
+def test_missing_tbottom_mask_raises():
     with pytest.raises(ValueError, match="land_mask_tbottom"):
-        _dataset(tmp_path, data_file=syn.DATA_FILE_NO_TBOTTOM)
+        _dataset(data_file=syn.DATA_FILE_NO_TBOTTOM)
 
 
 # ── land_fill_mode ──────────────────────────────────────────────────────────
 
 
-def test_invalid_land_fill_mode_raises(tmp_path):
+def test_invalid_land_fill_mode_raises():
     with pytest.raises(ValueError, match="land_fill_mode"):
-        _dataset(tmp_path, land_fill_mode="bogus")
+        _dataset(land_fill_mode="bogus")
 
 
-def test_nearest_fill_copies_nearest_ocean_pixel(tmp_path):
-    zero = _dataset(tmp_path, land_fill_mode="zero")
-    near = _dataset(tmp_path, land_fill_mode="nearest")
+def test_nearest_fill_copies_nearest_ocean_pixel():
+    zero = _dataset(land_fill_mode="zero")
+    near = _dataset(land_fill_mode="nearest")
     ocean = ~near.land_masks["ptho_bot"]
 
     # ocean pixels and non-ocean variables are untouched by the fill
@@ -82,8 +82,8 @@ def test_nearest_fill_copies_nearest_ocean_pixel(tmp_path):
     assert not torch.any(near.data["ptho_bot"] == syn.PTHO_LAND_VALUE)
 
 
-def test_zero_mode_land_is_zero_in_input(tmp_path):
-    ds = _dataset(tmp_path, land_fill_mode="zero")
+def test_zero_mode_land_is_zero_in_input():
+    ds = _dataset(land_fill_mode="zero")
     ds.compute_stats(TRAIN_IDX)
     x, _ = ds[10]
     i = ds.variables.index("ptho_bot")
@@ -94,8 +94,8 @@ def test_zero_mode_land_is_zero_in_input(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["zero", "nearest"])
-def test_compute_stats_uses_ocean_pixels_only(tmp_path, mode):
-    ds = _dataset(tmp_path, land_fill_mode=mode)
+def test_compute_stats_uses_ocean_pixels_only(mode):
+    ds = _dataset(land_fill_mode=mode)
     ds.compute_stats(TRAIN_IDX)
 
     raw = xr.open_dataset(syn.DATA_FILE)
@@ -108,9 +108,9 @@ def test_compute_stats_uses_ocean_pixels_only(tmp_path, mode):
     assert ds.input_stds[i].item() < 2.0  # land value 50.0 would blow this up
 
 
-def test_compute_stats_identical_across_land_fill_modes(tmp_path):
-    zero = _dataset(tmp_path, land_fill_mode="zero")
-    near = _dataset(tmp_path, land_fill_mode="nearest")
+def test_compute_stats_identical_across_land_fill_modes():
+    zero = _dataset(land_fill_mode="zero")
+    near = _dataset(land_fill_mode="nearest")
     zero.compute_stats(TRAIN_IDX)
     near.compute_stats(TRAIN_IDX)
     assert torch.allclose(zero.input_means, near.input_means, atol=1e-6)
@@ -120,14 +120,14 @@ def test_compute_stats_identical_across_land_fill_modes(tmp_path):
 # ── #40: hobday_smooth_target ───────────────────────────────────────────────
 
 
-def test_hobday_smooth_target_flag_off_leaves_target_unchanged(tmp_path):
-    ds = _dataset(tmp_path, hobday_smooth_target=False)
+def test_hobday_smooth_target_flag_off_leaves_target_unchanged():
+    ds = _dataset(hobday_smooth_target=False)
     raw = xr.open_dataset(syn.DATA_FILE)["target"].values
     assert np.array_equal(ds.target.numpy(), raw)
 
 
-def test_hobday_smooth_target_adds_unsmoothed_minus_smoothed_clim(tmp_path):
-    ds = _dataset(tmp_path, hobday_smooth_target=True)
+def test_hobday_smooth_target_adds_unsmoothed_minus_smoothed_clim():
+    ds = _dataset(hobday_smooth_target=True)
     raw = xr.open_dataset(syn.DATA_FILE)["target"].values
 
     clim = xr.open_dataset(syn.CLIM_FILE)

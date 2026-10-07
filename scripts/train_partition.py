@@ -11,7 +11,7 @@ see src/models/cnn_lstm.py):
 NS box (same as src/data/masking.py): lat[100:127], lon[150:187]
 
 Usage:
-  python scripts/train_partition.py --config configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml
+  python scripts/train_partition.py --config configs/gnll_quantile.yaml --fold 0
 """
 
 import argparse
@@ -51,6 +51,26 @@ def _require_clean_output_dir(output_dir: Path) -> None:
             f"checkpoint(s) from a previous run: "
             f"{[c.name for c in existing]}. Use a clean output_dir."
         )
+
+
+def _resolve_fold(config: dict, fold: int) -> None:
+    """Mutate config in place: inject fold and append "_fold{N}" to
+    run_name. Raises if the yaml already has a fold key (it must come from
+    --fold, so there is exactly one source of truth) or if fold is outside
+    [0, n_folds).
+    """
+    if "fold" in config:
+        raise ValueError(
+            "fold comes from --fold, remove it from the yaml "
+            f"(found fold: {config['fold']!r})."
+        )
+    if not (0 <= fold < config["n_folds"]):
+        raise ValueError(
+            f"--fold must be 0 <= fold < n_folds ({config['n_folds']}), "
+            f"got {fold}"
+        )
+    config["fold"] = fold
+    config["run_name"] = f"{config['run_name']}_fold{fold}"
 
 
 def _git_commit() -> str:
@@ -141,6 +161,7 @@ def _write_test_outputs(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument("--fold", type=int, required=True)
     parser.add_argument(
         "--limit_batches",
         type=int,
@@ -151,6 +172,8 @@ def main():
 
     with open(args.config) as f:
         config = yaml.safe_load(f)
+
+    _resolve_fold(config, args.fold)
 
     if config["in_channels"] != len(config["variables"]):
         raise ValueError(
@@ -165,15 +188,17 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     _require_clean_output_dir(output_dir)
 
-    # Print and save the exact resolved config this run is using, both in
-    # the SLURM/stdout log and as a standalone file in output_dir (survives
-    # after the run and doesn't require wandb access to inspect later).
-    print(f"\n=== Resolved config: {args.config} ===")
+    # Print and save the exact resolved config this run is using (fold
+    # injected, run_name fold-suffixed), both in the SLURM/stdout log and as
+    # a record in output_dir. datamodule below gets this same dict directly
+    # -- not a path it would have to re-read -- so it and train_partition.py
+    # can never end up looking at different config content.
+    print(f"\n=== Resolved config: {args.config} (fold {args.fold}) ===")
     print(yaml.dump(config, sort_keys=False, default_flow_style=False))
     with open(output_dir / "resolved_config.yaml", "w") as f:
         yaml.dump(config, f, sort_keys=False, default_flow_style=False)
 
-    datamodule = LazyDataModule(config_path=args.config)
+    datamodule = LazyDataModule(config=config)
     datamodule.setup()
 
     model_kwargs = dict(
