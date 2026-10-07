@@ -45,11 +45,17 @@ else
 fi
 LIMIT_BATCHES="${LIMIT_BATCHES:-0}"
 
-# module/environment scripts commonly reference unset variables internally;
-# set -u would abort the job on those, so it's relaxed only around them.
-set +u
-module load git/2.43.7-gcc-11.2.0
-set -u
+# sbatch inherits the submitting shell's environment, including whatever
+# modules it already has loaded -- module load git here can conflict with a
+# git module the submitter loaded themselves (seen in practice: job
+# 27948693, "git/2.43.7-gcc-11.2.0 cannot be loaded due to a conflict").
+# Only load it if no git is already on PATH.
+if ! command -v git >/dev/null 2>&1; then
+    set +u
+    module load git/2.43.7-gcc-11.2.0
+    set -u
+fi
+echo "git: $(git --version)"
 
 cd "$SLURM_SUBMIT_DIR"
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -83,6 +89,10 @@ done
 # `wandb sync` from a login node. Overrides whatever .env says.
 export WANDB_MODE=offline
 
+# Always activate this venv, regardless of whatever venv/conda env (or
+# none) the submitting shell already had active: `source activate` prepends
+# this venv's bin to PATH unconditionally, so it wins over anything
+# inherited.
 set +u
 source /work/bg1446/u241379/exprecursors/venv/bin/activate
 set -u
@@ -94,6 +104,8 @@ echo "limit_batches: $LIMIT_BATCHES"
 echo "MHW_DATA_FILE: $MHW_DATA_FILE ($(du -h "$MHW_DATA_FILE" | cut -f1))"
 echo "node: $(hostname)"
 echo "GPU: $(nvidia-smi --query-gpu=name,uuid --format=csv,noheader)"
+echo "python: $(which python)"
+python -c "import torch; print(f'torch {torch.__version__}, cuda available: {torch.cuda.is_available()}')"
 
 python scripts/train_partition.py --config "$CONFIG_YAML" --fold "$FOLD" \
     --limit_batches "$LIMIT_BATCHES"
