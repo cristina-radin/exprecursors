@@ -81,6 +81,16 @@ REMOVED_INERT_KEYS = {
     # docs/open_issues.md). This checkpoint was trained with it off.
     "focal_weight": False,
 }
+# yaml keys added to fold0.yaml whose value was hardcoded in
+# train_partition.py/cnn_lstm.py when the reference checkpoint was trained,
+# instead of being a config key. A key here may be present in fold0.yaml and
+# absent from the checkpoint's resolved_config.yaml only if fold0.yaml has
+# exactly this value; any other value is an error like any other mismatch.
+ADDED_KEYS = {
+    "early_stopping_patience": 30,
+    "save_top_k": 3,
+    "weight_decay": 0.0001,
+}
 
 
 def model_kwargs(cfg):
@@ -137,6 +147,8 @@ def load_reference_checkpoint(cfg):
                 continue
             problems.append(f"resolved_config.yaml has {key}={resolved[key]!r}, fold0.yaml does not")
         elif key not in resolved:
+            if key in ADDED_KEYS and cfg[key] == ADDED_KEYS[key]:
+                continue
             problems.append(f"fold0.yaml has {key}={cfg[key]!r}, resolved_config.yaml does not")
         elif resolved[key] != cfg[key]:
             problems.append(f"{key}: resolved={resolved[key]!r} fold0.yaml={cfg[key]!r}")
@@ -154,6 +166,7 @@ def build_module(cfg, model, dm):
     kwargs = dict(
         model=model,
         learning_rate=cfg["learning_rate"],
+        weight_decay=cfg["weight_decay"],
         target_mean=dm.target_mean,
         target_std=dm.target_std,
         loss_fn="GaussianNLLLoss",

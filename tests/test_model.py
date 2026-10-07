@@ -39,6 +39,7 @@ def _build(gaussian_nll, quantile_head, loss_fn, **module_overrides):
     kwargs = dict(
         model=model,
         learning_rate=1e-3,
+        weight_decay=1e-4,
         target_mean=0.0,
         target_std=1.0,
         loss_fn=loss_fn,

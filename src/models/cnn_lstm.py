@@ -225,6 +225,7 @@ class CNNLightningModule(pl.LightningModule):
         self,
         model: nn.Module,
         learning_rate: float,
+        weight_decay: float,
         target_mean: float,
         target_std: float,
         loss_fn: str,
@@ -241,6 +242,7 @@ class CNNLightningModule(pl.LightningModule):
 
         self.model = model
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
         self.target_mean = target_mean
         self.target_std = target_std
         self.gaussian_nll = gaussian_nll
@@ -403,7 +405,7 @@ class CNNLightningModule(pl.LightningModule):
 
     def configure_optimizers(self) -> Dict[str, Any]:
         optimizer = torch.optim.Adam(
-            self.parameters(), lr=self.learning_rate, weight_decay=1e-4
+            self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
         )
         # Linear warmup for warmup_epochs, then cosine decay to 0 over the
         # remaining cosine_t_max_epochs.

@@ -30,11 +30,14 @@ lstm_hidden: 512
 lstm_layers: 2
 dropout: 0.2
 learning_rate: 0.00005
+weight_decay: 0.0001
 lr_scheduler: cosine
 warmup_epochs: 5
 cosine_t_max_epochs: 60
 batch_size: 16
 max_epochs: 1000
+early_stopping_patience: 30
+save_top_k: 3
 window_size: 60
 lead_time: 7
 land_fill_mode: nearest

@@ -6,13 +6,15 @@ Three conditions, same TbotAtm variable set (ptho_bot + atmosphere):
   --mode remote_only : zero ALL channels inside NS box  → only remote info
   --mode local_only  : zero ALL channels outside NS box → only local NS info
 
-NS box (same as dataset.py): lat[100:127], lon[150:187]
+NS box (same as src/data/masking.py): lat[100:127], lon[150:187]
 
 Usage:
-  python scripts/train_partition.py --config configs/partition/remote/fold0.yaml --mode remote_only
-  python scripts/train_partition.py --config configs/partition/local/fold0.yaml  --mode local_only
+  python scripts/train_partition.py --config configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml --mode full
+  python scripts/train_partition.py --config configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml --mode local_only
 """
 
+import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -26,6 +28,7 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
 )
+from pytorch_lightning.loggers import WandbLogger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.datamodule import LazyDataModule
@@ -136,8 +139,6 @@ MODE_MAP = {
 
 
 def main():
-    import argparse
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--mode", required=True, choices=list(MODE_MAP.keys()))
@@ -192,6 +193,7 @@ def main():
     lightning_module = LightningClass(
         model=model,
         learning_rate=config["learning_rate"],
+        weight_decay=config["weight_decay"],
         target_mean=datamodule.target_mean,
         target_std=datamodule.target_std,
         loss_fn=config["loss_fn"],
@@ -210,16 +212,16 @@ def main():
             filename="cnn-lstm-{epoch:02d}-{val_loss:.4f}",
             monitor="val_loss",
             mode="min",
-            save_top_k=3,
+            save_top_k=config["save_top_k"],
         ),
-        EarlyStopping(monitor="val_loss", patience=30, mode="min"),
+        EarlyStopping(
+            monitor="val_loss",
+            patience=config["early_stopping_patience"],
+            mode="min",
+        ),
         LearningRateMonitor(logging_interval="epoch"),
         LossCurvePlotCallback(output_dir),
     ]
-
-    import os
-
-    from pytorch_lightning.loggers import WandbLogger
 
     wandb_entity = os.environ.get("WANDB_ENTITY")
     wandb_project = os.environ.get("WANDB_PROJECT")
@@ -228,13 +230,10 @@ def main():
             "WANDB_ENTITY and WANDB_PROJECT must be set. "
             "Add them to .env or export before running."
         )
-    fold = config.get("fold", 0)
-    seed = config.get("seed", 42)
-    run_name = f"{args.mode}_fold{fold}_seed{seed}"
     logger = WandbLogger(
         entity=wandb_entity,
         project=wandb_project,
-        name=run_name,
+        name=config["run_name"],
         save_dir=str(output_dir),
         mode=os.environ.get("WANDB_MODE", "online"),
         config=config,
