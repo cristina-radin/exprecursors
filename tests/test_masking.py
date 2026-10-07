@@ -1,21 +1,15 @@
 """
-Test that remote_only and local_only masking functions behave correctly.
-
-Both _mask() methods use module-level constants (_NS_LAT, _NS_LON) from
-train_partition.py, so no model weights are needed — instantiate with __new__.
+Test that mask_remote and mask_local (src/data/masking.py) behave correctly.
+Used by CNNLSTMModel._encode() -- see tests/test_model.py for the
+mode-masking tests on the model itself.
 
 Input tensor shape: (batch, channels, window, lat, lon) = (1, C, W, 141, 201)
 NS box: lat[100:127], lon[150:187]
 """
 
-import sys
-from pathlib import Path
-
 import torch
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from scripts.train_partition import LocalOnlyLightningModule, RemoteOnlyLightningModule
-from src.data.masking import _NS_LAT, _NS_LON
+from src.data.masking import _NS_LAT, _NS_LON, mask_local, mask_remote
 
 BATCH, C, W, LAT, LON = 1, 3, 60, 141, 201
 
@@ -24,26 +18,16 @@ def _ones():
     return torch.ones(BATCH, C, W, LAT, LON)
 
 
-def _remote():
-    lm = object.__new__(RemoteOnlyLightningModule)
-    return lm
-
-
-def _local():
-    lm = object.__new__(LocalOnlyLightningModule)
-    return lm
-
-
-# ── remote_only ───────────────────────────────────────────────────────────────
+# ── mask_remote ───────────────────────────────────────────────────────────────
 
 
 def test_remote_zeros_ns_box():
-    out = _remote()._mask(_ones())
+    out = mask_remote(_ones())
     assert out[:, :, :, _NS_LAT, _NS_LON].abs().max().item() == 0.0
 
 
 def test_remote_preserves_outside_ns():
-    out = _remote()._mask(_ones())
+    out = mask_remote(_ones())
     outside = out.clone()
     outside[:, :, :, _NS_LAT, _NS_LON] = 1.0  # ignore NS box
     assert outside.min().item() == 1.0
@@ -51,22 +35,22 @@ def test_remote_preserves_outside_ns():
 
 def test_remote_does_not_modify_input():
     xs = _ones()
-    _remote()._mask(xs)
-    assert xs.min().item() == 1.0  # original tensor unchanged (clone inside _mask)
+    mask_remote(xs)
+    assert xs.min().item() == 1.0  # original tensor unchanged (clone inside)
 
 
-# ── local_only ────────────────────────────────────────────────────────────────
+# ── mask_local ────────────────────────────────────────────────────────────────
 
 
 def test_local_zeros_outside_ns():
-    out = _local()._mask(_ones())
+    out = mask_local(_ones())
     outside = out.clone()
     outside[:, :, :, _NS_LAT, _NS_LON] = 0.0  # ignore NS box
     assert outside.abs().max().item() == 0.0
 
 
 def test_local_preserves_ns_box():
-    out = _local()._mask(_ones())
+    out = mask_local(_ones())
     assert out[:, :, :, _NS_LAT, _NS_LON].min().item() == 1.0
 
 
@@ -76,8 +60,6 @@ def test_local_preserves_ns_box():
 def test_remote_and_local_are_complementary():
     """remote + local masks should sum to all-ones (no pixel lost, no pixel doubled)."""
     xs = _ones()
-    r = _remote()._mask(xs)
-    local_out = _local()._mask(xs)
-    total = r + local_out
+    total = mask_remote(xs) + mask_local(xs)
     assert total.min().item() == 1.0
     assert total.max().item() == 1.0

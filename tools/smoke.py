@@ -4,13 +4,14 @@ Smoke-test scripts/train_partition.py end to end, on real data, with
 exercises main() at all; neither pytest nor tools/equivalence.py ever call
 it (see docs/open_issues.md).
 
-Six cases: the three committed loss variants in --mode full, plus
---mode local_only and --mode remote_only with the committed loss
-(full_gnll_quantile_v2_landfill), plus land_fill_mode: zero in --mode full.
+Six cases: the three committed loss variants with mode: full, plus
+mode: local_only and mode: remote_only with the committed loss
+(full_gnll_quantile_v2_landfill), plus land_fill_mode: zero with mode: full.
 local_only/remote_only/zero_fill need their own run_name (so their output
-dirs don't collide with --mode full's); this script builds those three
-temporary configs itself, from the real committed yaml, in a throwaway
-directory -- nothing under configs/ or sandbox/ is read-written for them.
+dirs don't collide with mode: full's) and, for the first two, their own
+mode; this script builds those three temporary configs itself, from the
+real committed yaml, in a throwaway directory -- nothing under configs/ or
+sandbox/ is read-written for them.
 
   python tools/smoke.py
 
@@ -51,7 +52,7 @@ def _write(cfg, path):
         yaml.dump(cfg, f, sort_keys=False, default_flow_style=False)
 
 
-def _run_case(config_path, mode, env):
+def _run_case(config_path, env):
     start = time.time()
     proc = subprocess.run(
         [
@@ -59,8 +60,6 @@ def _run_case(config_path, mode, env):
             str(TRAIN_SCRIPT),
             "--config",
             str(config_path),
-            "--mode",
-            mode,
             "--fast_dev_run",
             "1",
         ],
@@ -98,33 +97,35 @@ def main():
         env["WANDB_PROJECT"] = "smoke"
         env["WANDB_MODE"] = "disabled"
 
-        cases = [(label, path, "full") for label, path in BASE_CONFIGS.items()]
+        cases = [(label, path) for label, path in BASE_CONFIGS.items()]
 
         quantile_cfg = _load(BASE_CONFIGS["full_gnll_quantile"])
 
         local_cfg = copy.deepcopy(quantile_cfg)
         local_cfg["run_name"] = "smoke_local_only_fold0"
+        local_cfg["mode"] = "local_only"
         local_path = tmp / "local_only.yaml"
         _write(local_cfg, local_path)
-        cases.append(("local_only", local_path, "local_only"))
+        cases.append(("local_only", local_path))
 
         remote_cfg = copy.deepcopy(quantile_cfg)
         remote_cfg["run_name"] = "smoke_remote_only_fold0"
+        remote_cfg["mode"] = "remote_only"
         remote_path = tmp / "remote_only.yaml"
         _write(remote_cfg, remote_path)
-        cases.append(("remote_only", remote_path, "remote_only"))
+        cases.append(("remote_only", remote_path))
 
         zero_cfg = copy.deepcopy(quantile_cfg)
         zero_cfg["run_name"] = "smoke_zero_fill_fold0"
         zero_cfg["land_fill_mode"] = "zero"
         zero_path = tmp / "zero_fill.yaml"
         _write(zero_cfg, zero_path)
-        cases.append(("zero_fill", zero_path, "full"))
+        cases.append(("zero_fill", zero_path))
 
         results = []
-        for label, config_path, mode in cases:
-            print(f"=== {label} (mode={mode}) ===", flush=True)
-            code, elapsed, stdout, stderr = _run_case(config_path, mode, env)
+        for label, config_path in cases:
+            print(f"=== {label} ===", flush=True)
+            code, elapsed, stdout, stderr = _run_case(config_path, env)
             train, val, test = _extract_losses(stdout)
             results.append((label, code, elapsed, train, val, test))
             if code != 0:

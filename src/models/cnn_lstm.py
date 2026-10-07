@@ -17,6 +17,10 @@ import torch
 import torch.nn as nn
 from torchmetrics.regression import MeanAbsoluteError, PearsonCorrCoef
 
+from src.data.masking import mask_local, mask_remote
+
+MODES = ("full", "local_only", "remote_only")
+
 # =============================================================================
 # CNN Encoder — one spatial frame → feature vector
 # =============================================================================
@@ -101,6 +105,9 @@ class CNNLSTMModel(nn.Module):
         dropout:      dropout in LSTM
         pooling:      "max" or "avg" — see CNNEncoder docstring
         padding_mode: "zeros" or "reflect" — see CNNEncoder docstring
+        mode:         "full" (no masking), "local_only" (zero everything
+            outside the North Sea box) or "remote_only" (zero everything
+            inside it) — see src/data/masking.py for the exact box.
     """
 
     def __init__(
@@ -114,12 +121,17 @@ class CNNLSTMModel(nn.Module):
         pooling: str,
         quantile_head: bool,
         padding_mode: str,
+        mode: str,
     ):
         super().__init__()
+
+        if mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
 
         self.gaussian_nll = gaussian_nll
         self.pooling = pooling
         self.padding_mode = padding_mode
+        self.mode = mode
         self.quantile_head_enabled = quantile_head
         self.cnn_encoder = CNNEncoder(
             in_channels,
@@ -161,13 +173,21 @@ class CNNLSTMModel(nn.Module):
 
     def _encode(self, x_spatial: torch.Tensor) -> torch.Tensor:
         """Runs the CNN encoder frame-by-frame then the LSTM over the
-        resulting sequence, returning the last timestep's hidden state.
+        resulting sequence, returning the last timestep's hidden state. The
+        only point every entry path (forward(), forward_with_quantile(),
+        CNNLightningModule._step()) shares, so self.mode's masking applies
+        identically regardless of which one is called.
 
         Args:
             x_spatial: (batch, window_size, n_vars, lat, lon)
         Returns:
             combined: (batch, context_dim)
         """
+        if self.mode == "local_only":
+            x_spatial = mask_local(x_spatial)
+        elif self.mode == "remote_only":
+            x_spatial = mask_remote(x_spatial)
+
         batch, window, n_vars, lat, lon = x_spatial.shape
 
         # Encode each frame with the CNN

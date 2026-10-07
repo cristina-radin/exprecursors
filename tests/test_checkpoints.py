@@ -31,6 +31,7 @@ def _model_kwargs(gaussian_nll, quantile_head):
         pooling="avg",
         padding_mode="zeros",
         quantile_head=quantile_head,
+        mode="full",
     )
 
 

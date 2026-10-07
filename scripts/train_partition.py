@@ -1,16 +1,17 @@
 """
 train_partition.py — Train partition experiments for local vs remote predictability.
 
-Three conditions, same TbotAtm variable set (ptho_bot + atmosphere):
-  --mode full        : no masking (baseline)
-  --mode remote_only : zero ALL channels inside NS box  → only remote info
-  --mode local_only  : zero ALL channels outside NS box → only local NS info
+Three conditions, same TbotAtm variable set (ptho_bot + atmosphere), selected
+by the yaml's "mode" key (CNNLSTMModel masks the input inside _encode(),
+see src/models/cnn_lstm.py):
+  mode: full        : no masking (baseline)
+  mode: remote_only : zero ALL channels inside NS box  → only remote info
+  mode: local_only  : zero ALL channels outside NS box → only local NS info
 
 NS box (same as src/data/masking.py): lat[100:127], lon[150:187]
 
 Usage:
-  python scripts/train_partition.py --config configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml --mode full
-  python scripts/train_partition.py --config configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml --mode local_only
+  python scripts/train_partition.py --config configs/partition/full_gnll_quantile_v2_landfill/fold0.yaml
 """
 
 import argparse
@@ -32,54 +33,9 @@ from pytorch_lightning.loggers import WandbLogger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.datamodule import LazyDataModule
-from src.data.masking import mask_local, mask_remote
 from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 from src.utils.checkpoints import save_model_config
 from src.utils.paths import EXPERIMENTS_DIR
-
-# ── Remote-only: zero everything INSIDE NS box ───────────────────────────────
-
-
-class RemoteOnlyLightningModule(CNNLightningModule):
-    """Zeros all spatial channels inside the NS box in every forward pass."""
-
-    def _mask(self, xs: torch.Tensor) -> torch.Tensor:
-        return mask_remote(xs)
-
-    def training_step(self, batch, batch_idx):
-        xs, y = batch
-        return super().training_step((self._mask(xs), y), batch_idx)
-
-    def validation_step(self, batch, batch_idx):
-        xs, y = batch
-        return super().validation_step((self._mask(xs), y), batch_idx)
-
-    def test_step(self, batch, batch_idx):
-        xs, y = batch
-        return super().test_step((self._mask(xs), y), batch_idx)
-
-
-# ── Local-only: zero everything OUTSIDE NS box ───────────────────────────────
-
-
-class LocalOnlyLightningModule(CNNLightningModule):
-    """Zeros all spatial channels outside the NS box in every forward pass."""
-
-    def _mask(self, xs: torch.Tensor) -> torch.Tensor:
-        return mask_local(xs)
-
-    def training_step(self, batch, batch_idx):
-        xs, y = batch
-        return super().training_step((self._mask(xs), y), batch_idx)
-
-    def validation_step(self, batch, batch_idx):
-        xs, y = batch
-        return super().validation_step((self._mask(xs), y), batch_idx)
-
-    def test_step(self, batch, batch_idx):
-        xs, y = batch
-        return super().test_step((self._mask(xs), y), batch_idx)
-
 
 # ── Loss curve callback ───────────────────────────────────────────────────────
 
@@ -131,17 +87,9 @@ def _require_clean_output_dir(output_dir: Path, fast_dev_run: int) -> None:
         )
 
 
-MODE_MAP = {
-    "full": CNNLightningModule,
-    "remote_only": RemoteOnlyLightningModule,
-    "local_only": LocalOnlyLightningModule,
-}
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("--mode", required=True, choices=list(MODE_MAP.keys()))
     parser.add_argument("--fast_dev_run", type=int, default=0)
     args = parser.parse_args()
 
@@ -182,6 +130,7 @@ def main():
         pooling=config["pooling"],
         padding_mode=config["padding_mode"],
         quantile_head=config["quantile_head"],
+        mode=config["mode"],
     )
     model = CNNLSTMModel(**model_kwargs)
     # Ground truth for eval/XAI scripts (load_model_config) — the exact
@@ -189,8 +138,7 @@ def main():
     # re-derive them. See src/utils/checkpoints.py.
     save_model_config(output_dir, **model_kwargs)
 
-    LightningClass = MODE_MAP[args.mode]
-    lightning_module = LightningClass(
+    lightning_module = CNNLightningModule(
         model=model,
         learning_rate=config["learning_rate"],
         weight_decay=config["weight_decay"],

@@ -90,6 +90,7 @@ ADDED_KEYS = {
     "early_stopping_patience": 30,
     "save_top_k": 3,
     "weight_decay": 0.0001,
+    "mode": "full",
 }
 
 
@@ -104,6 +105,7 @@ def model_kwargs(cfg):
         pooling=cfg["pooling"],
         padding_mode=cfg["padding_mode"],
         quantile_head=cfg["quantile_head"],
+        mode=cfg["mode"],
     )
 
 
@@ -136,6 +138,8 @@ def load_reference_checkpoint(cfg):
                 continue
             problems.append(f"model_config.json has {key}={saved[key]!r}, not built")
         elif key not in saved:
+            if key in ADDED_KEYS and built[key] == ADDED_KEYS[key]:
+                continue
             problems.append(f"{key}={built[key]!r} built, missing in model_config.json")
         elif saved[key] != built[key]:
             problems.append(f"{key}: model_config.json={saved[key]!r} built={built[key]!r}")

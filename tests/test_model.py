@@ -24,7 +24,7 @@ VARIANTS = [
 ]
 
 
-def _build(gaussian_nll, quantile_head, loss_fn, **module_overrides):
+def _build(gaussian_nll, quantile_head, loss_fn, mode="full", **module_overrides):
     model = CNNLSTMModel(
         in_channels=N_VARS,
         cnn_features=8,
@@ -35,6 +35,7 @@ def _build(gaussian_nll, quantile_head, loss_fn, **module_overrides):
         pooling="avg",
         padding_mode="zeros",
         quantile_head=quantile_head,
+        mode=mode,
     )
     kwargs = dict(
         model=model,
@@ -195,6 +196,7 @@ def test_invalid_pooling_raises(pooling):
             pooling=pooling,
             padding_mode="zeros",
             quantile_head=False,
+            mode="full",
         )
 
 
@@ -211,4 +213,55 @@ def test_invalid_padding_mode_raises(padding_mode):
             pooling="avg",
             padding_mode=padding_mode,
             quantile_head=False,
+            mode="full",
         )
+
+
+def test_invalid_mode_raises():
+    with pytest.raises(ValueError, match="mode must be"):
+        _build(True, False, "GaussianNLLLoss", mode="bogus")
+
+
+# ── mode masking: applied once, inside _encode() ─────────────────────────────
+
+# The NS box (src/data/masking.py) is lat[100:127], lon[150:187] on the real
+# grid -- a tiny synthetic grid would make the mask a silent no-op, so these
+# two tests use the real spatial size.
+REAL_LAT, REAL_LON = 141, 201
+NS_LAT, NS_LON = slice(100, 127), slice(150, 187)
+
+
+@pytest.mark.parametrize("mode", ["local_only", "remote_only"])
+def test_mode_masks_gradient_exactly_zero_in_masked_region(mode):
+    model, _ = _build(True, False, "GaussianNLLLoss", mode=mode)
+    x = torch.randn(1, 2, N_VARS, REAL_LAT, REAL_LON, requires_grad=True)
+
+    model.forward(x).sum().backward()
+    grad = x.grad
+
+    if mode == "local_only":
+        # everything OUTSIDE the NS box is masked -> no gradient reaches it
+        outside = grad.clone()
+        outside[:, :, :, NS_LAT, NS_LON] = 0.0
+        assert torch.all(outside == 0.0)
+    else:  # remote_only: everything INSIDE the NS box is masked
+        assert torch.all(grad[:, :, :, NS_LAT, NS_LON] == 0.0)
+
+
+def test_mode_masking_is_identical_across_entry_points():
+    """forward(), forward_with_quantile() and _step() all go through the
+    same _encode(), so they must mask (and predict) identically regardless
+    of which one is called."""
+    model, module = _build(True, True, "GaussianNLLLoss", mode="local_only")
+    model.eval()
+    module.eval()
+    x = torch.randn(1, 2, N_VARS, REAL_LAT, REAL_LON)
+    y = torch.randn(1, 1)
+
+    with torch.no_grad():
+        y_hat_forward = model.forward(x)
+        y_hat_fwq, _ = model.forward_with_quantile(x)
+        _, pred_step, _ = module._step((x, y), "val")
+
+    assert torch.equal(y_hat_forward, y_hat_fwq)
+    assert torch.equal(pred_step, y_hat_forward[:, 0:1])
