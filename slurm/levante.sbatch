@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80G
 #SBATCH --time=12:00:00
-#SBATCH --output=logs/%x_%A_%a.out
+#SBATCH --output=logs/%x_%j.out
 #
 # Levante-specific. See slurm/raven.sbatch for the Raven equivalent (pending).
 #
@@ -19,11 +19,21 @@
 #     slurm/levante.sbatch configs/gnll_quantile.yaml 0
 #
 # For a 5-fold array (one task per fold, SLURM_ARRAY_TASK_ID becomes the
-# fold -- the second argument is then unused and may be omitted):
+# fold -- the second argument is then unused and may be omitted). %j alone
+# does not distinguish array tasks, so override --output on the command
+# line for this case:
 #
 #   mkdir -p logs
 #   sbatch --account=bg1446_gpu --mail-user=you@example.com --mail-type=END,FAIL \
-#     --array=0-4 slurm/levante.sbatch configs/gnll_quantile.yaml
+#     --array=0-4 --output=logs/%x_%A_%a.out slurm/levante.sbatch configs/gnll_quantile.yaml
+#
+# Short real-GPU smoke test before a full run: set LIMIT_BATCHES (forwarded
+# as --limit_batches; train_partition.py then suffixes run_name with
+# "_limit<N>" so it can never collide with a real run's output_dir):
+#
+#   mkdir -p logs
+#   LIMIT_BATCHES=5 sbatch --account=bg1446_gpu \
+#     slurm/levante.sbatch configs/gnll_quantile.yaml 0
 
 set -euo pipefail
 
@@ -33,6 +43,13 @@ if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
 else
     FOLD="${2:?fold is required: pass it as the 2nd argument, or submit with --array so SLURM_ARRAY_TASK_ID supplies it}"
 fi
+LIMIT_BATCHES="${LIMIT_BATCHES:-0}"
+
+# module/environment scripts commonly reference unset variables internally;
+# set -u would abort the job on those, so it's relaxed only around them.
+set +u
+module load git/2.43.7-gcc-11.2.0
+set -u
 
 cd "$SLURM_SUBMIT_DIR"
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -56,7 +73,7 @@ fi
 set -a
 source .env
 set +a
-for var in MHW_DATA_FILE MHW_CLIM_FILE WANDB_ENTITY WANDB_PROJECT; do
+for var in MHW_DATA_FILE MHW_CLIM_FILE MHW_EXPERIMENTS_DIR WANDB_ENTITY WANDB_PROJECT; do
     if [ -z "${!var:-}" ]; then
         echo "ERROR: $var is not set (check .env)." >&2
         exit 1
@@ -66,14 +83,17 @@ done
 # `wandb sync` from a login node. Overrides whatever .env says.
 export WANDB_MODE=offline
 
-module load git/2.43.7-gcc-11.2.0
+set +u
 source /work/bg1446/u241379/exprecursors/venv/bin/activate
+set -u
 
 echo "commit: $(git rev-parse HEAD)"
 echo "config: $CONFIG_YAML"
 echo "fold: $FOLD"
+echo "limit_batches: $LIMIT_BATCHES"
 echo "MHW_DATA_FILE: $MHW_DATA_FILE ($(du -h "$MHW_DATA_FILE" | cut -f1))"
 echo "node: $(hostname)"
 echo "GPU: $(nvidia-smi --query-gpu=name,uuid --format=csv,noheader)"
 
-python scripts/train_partition.py --config "$CONFIG_YAML" --fold "$FOLD"
+python scripts/train_partition.py --config "$CONFIG_YAML" --fold "$FOLD" \
+    --limit_batches "$LIMIT_BATCHES"
