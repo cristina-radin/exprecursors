@@ -14,7 +14,9 @@ and mode/land_fill_mode for the three non-base cases) so none of them touch
 the real committed yaml files, configs/, or sandbox/.
 
 After each case, checks that output_dir has: a checkpoint, metrics.csv,
-resolved_config.yaml, model_config.json.
+resolved_config.yaml, model_config.json, test_metrics.json,
+test_predictions.npz -- and that test_metrics.json's best_checkpoint_name
+names a file that actually exists in checkpoints/.
 
   python tools/smoke.py
 
@@ -25,6 +27,7 @@ written under one temp directory, deleted when this script exits.
 """
 
 import copy
+import json
 import os
 import re
 import subprocess
@@ -94,7 +97,20 @@ def _check_artifacts(run_dir):
         "metrics.csv": (run_dir / "metrics.csv").exists(),
         "resolved_config.yaml": (run_dir / "resolved_config.yaml").exists(),
         "model_config.json": (run_dir / "model_config.json").exists(),
+        "test_predictions.npz": (run_dir / "test_predictions.npz").exists(),
     }
+
+    metrics_path = run_dir / "test_metrics.json"
+    checks["test_metrics.json"] = metrics_path.exists()
+    if checks["test_metrics.json"]:
+        test_metrics = json.loads(metrics_path.read_text())
+        best_name = test_metrics.get("best_checkpoint_name")
+        checks["best_checkpoint_name_exists"] = bool(
+            best_name and (run_dir / "checkpoints" / best_name).exists()
+        )
+    else:
+        checks["best_checkpoint_name_exists"] = False
+
     return checks
 
 

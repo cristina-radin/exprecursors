@@ -301,8 +301,10 @@ class CNNLightningModule(pl.LightningModule):
         self.test_mae = MeanAbsoluteError()
         self.test_corr = PearsonCorrCoef()
 
-        self.test_preds = []
-        self.test_targets = []
+        self.test_means = []
+        self.test_log_vars = []
+        self.test_q_preds = []
+        self.test_ys = []
 
     def forward(self, x_spatial):
         return self.model(x_spatial.float())
@@ -368,8 +370,10 @@ class CNNLightningModule(pl.LightningModule):
     def on_test_epoch_start(self):
         # Reset so repeated trainer.test() calls in the same process don't
         # accumulate predictions across runs.
-        self.test_preds = []
-        self.test_targets = []
+        self.test_means = []
+        self.test_log_vars = []
+        self.test_q_preds = []
+        self.test_ys = []
 
     def test_step(self, batch, batch_idx):
         loss, pred, y = self._step(batch, "test")
@@ -377,8 +381,19 @@ class CNNLightningModule(pl.LightningModule):
         self.test_mae.update(pred.squeeze(), y.squeeze())
         self.test_corr.update(pred.squeeze(), y.squeeze())
 
-        self.test_preds.append(pred.detach().cpu())
-        self.test_targets.append(y.detach().cpu())
+        # pred (from _step) is already the mean; call _forward_dual again
+        # (same deterministic eval-mode forward) to also get log_var/q_pred,
+        # which _step's (loss, pred, y) contract doesn't carry -- callers
+        # (training_step/validation_step, tools/equivalence.py) rely on
+        # that exact 3-tuple, so it stays unchanged.
+        x_spatial, _ = batch
+        y_hat, q_pred = self._forward_dual(x_spatial)
+        self.test_means.append(y_hat[:, 0:1].detach().cpu())
+        if self.gaussian_nll:
+            self.test_log_vars.append(y_hat[:, 1:2].detach().cpu())
+        if self.quantile_head:
+            self.test_q_preds.append(q_pred.detach().cpu())
+        self.test_ys.append(y.detach().cpu())
 
         self.log("test_loss", loss, on_epoch=True)
         return loss
@@ -395,33 +410,18 @@ class CNNLightningModule(pl.LightningModule):
             f"\nTest results:  MAE={mae:.4f} (norm)  MAE={mae_physical:.4f} °C  Pearson r={corr:.4f}"
         )
 
-        # Save plot only from rank 0 to avoid race condition on shared filesystem
-        if not self.trainer.is_global_zero:
-            return
-
-        import os
-
-        import matplotlib.pyplot as plt
-
-        log_dir = "outputs"
-        if self.trainer and hasattr(self.trainer, "default_root_dir"):
-            log_dir = self.trainer.default_root_dir
-
-        preds = torch.cat(self.test_preds).squeeze()
-        targets = torch.cat(self.test_targets).squeeze()
-
-        plt.figure(figsize=(12, 4))
-        plt.plot(targets.numpy(), label="True", alpha=0.7)
-        plt.plot(preds.numpy(), label="Predicted", alpha=0.7)
-        plt.legend()
-        plt.title(
-            f"Test predictions vs truth  (MAE={mae_physical:.3f} °C, r={corr:.3f})"
+        # Concatenated here (not saved to disk): this module has no idea of
+        # fold, sample dates, or where to write a file -- train_partition.py
+        # reads these attributes after trainer.test() returns and assembles
+        # test_predictions.npz/test_metrics.json itself.
+        self.test_mean = torch.cat(self.test_means).squeeze(-1)
+        self.test_y = torch.cat(self.test_ys).squeeze(-1)
+        self.test_log_var = (
+            torch.cat(self.test_log_vars).squeeze(-1) if self.gaussian_nll else None
         )
-        plt.xlabel("Sample")
-        plt.ylabel("SST anomaly normalised (North Sea)")
-        plt.tight_layout()
-        plt.savefig(os.path.join(log_dir, "test_predictions.png"))
-        plt.close()
+        self.test_q_pred = (
+            torch.cat(self.test_q_preds).squeeze(-1) if self.quantile_head else None
+        )
 
     def configure_optimizers(self) -> Dict[str, Any]:
         optimizer = torch.optim.Adam(

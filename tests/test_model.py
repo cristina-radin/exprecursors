@@ -132,6 +132,35 @@ def test_pinball_gradient_does_not_reach_fc_and_nll_gradient_does_not_reach_quan
     assert any(p.grad is not None for p in model.fc.parameters())
 
 
+# ── test_step/on_test_epoch_end: accumulate mean/log_var/q_pred/y only ──────
+
+
+@pytest.mark.parametrize("name,gaussian_nll,quantile_head,loss_fn", VARIANTS)
+def test_on_test_epoch_end_concatenates_exactly_what_was_accumulated(
+    name, gaussian_nll, quantile_head, loss_fn
+):
+    model, module = _build(gaussian_nll, quantile_head, loss_fn)
+    module.eval()
+
+    module.on_test_epoch_start()
+    n_batches = 3
+    with torch.no_grad():
+        for _ in range(n_batches):
+            module.test_step(_batch(), 0)
+    module.on_test_epoch_end()
+
+    assert module.test_mean.shape == (n_batches * BATCH,)
+    assert module.test_y.shape == (n_batches * BATCH,)
+    if gaussian_nll:
+        assert module.test_log_var.shape == (n_batches * BATCH,)
+    else:
+        assert module.test_log_var is None
+    if quantile_head:
+        assert module.test_q_pred.shape == (n_batches * BATCH,)
+    else:
+        assert module.test_q_pred is None
+
+
 # ── lr schedule: warmup then cosine decay ────────────────────────────────────
 
 
