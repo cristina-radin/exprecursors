@@ -22,6 +22,7 @@ wandb/
 *.out
 *.err
 **/*.log
+logs/
 
 # Figures and PDFs
 *.png
