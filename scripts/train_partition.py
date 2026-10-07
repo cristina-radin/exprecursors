@@ -19,17 +19,11 @@ import os
 import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import torch
 import yaml
-from pytorch_lightning.callbacks import (
-    Callback,
-    EarlyStopping,
-    LearningRateMonitor,
-    ModelCheckpoint,
-)
-from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import CSVLogger, WandbLogger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.datamodule import LazyDataModule
@@ -37,47 +31,14 @@ from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 from src.utils.checkpoints import save_model_config
 from src.utils.paths import EXPERIMENTS_DIR
 
-# ── Loss curve callback ───────────────────────────────────────────────────────
-
-
-class LossCurvePlotCallback(Callback):
-    def __init__(self, output_dir):
-        self.output_dir = Path(output_dir)
-        self.train_losses, self.val_losses = [], []
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        loss = trainer.callback_metrics.get("train_loss_epoch")
-        if loss is not None:
-            self.train_losses.append(float(loss))
-
-    def on_validation_epoch_end(self, trainer, pl_module):
-        loss = trainer.callback_metrics.get("val_loss")
-        if loss is not None:
-            self.val_losses.append(float(loss))
-
-    def on_train_end(self, trainer, pl_module):
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(self.train_losses, label="train_loss")
-        ax.plot(self.val_losses, label="val_loss")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss")
-        ax.legend()
-        plt.tight_layout()
-        plt.savefig(self.output_dir / "loss_curves.png", dpi=150, bbox_inches="tight")
-        plt.close()
-
-
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
-def _require_clean_output_dir(output_dir: Path, fast_dev_run: int) -> None:
+def _require_clean_output_dir(output_dir: Path) -> None:
     """Raise if output_dir/checkpoints already has a .ckpt file from an
     earlier run -- best_ckpt() picks the lowest val_loss across the whole
-    directory and would silently mix runs. fast_dev_run never writes
-    checkpoints, so it is exempt.
+    directory and would silently mix runs.
     """
-    if fast_dev_run:
-        return
     existing = list((output_dir / "checkpoints").glob("*.ckpt"))
     if existing:
         raise RuntimeError(
@@ -90,7 +51,12 @@ def _require_clean_output_dir(output_dir: Path, fast_dev_run: int) -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("--fast_dev_run", type=int, default=0)
+    parser.add_argument(
+        "--limit_batches",
+        type=int,
+        default=0,
+        help="limit train/val/test to this many batches per epoch (0 = no limit)",
+    )
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -107,7 +73,7 @@ def main():
 
     output_dir = EXPERIMENTS_DIR / "partition" / config["run_name"]
     output_dir.mkdir(parents=True, exist_ok=True)
-    _require_clean_output_dir(output_dir, args.fast_dev_run)
+    _require_clean_output_dir(output_dir)
 
     # Print and save the exact resolved config this run is using, both in
     # the SLURM/stdout log and as a standalone file in output_dir (survives
@@ -168,7 +134,6 @@ def main():
             mode="min",
         ),
         LearningRateMonitor(logging_interval="epoch"),
-        LossCurvePlotCallback(output_dir),
     ]
 
     wandb_entity = os.environ.get("WANDB_ENTITY")
@@ -178,7 +143,7 @@ def main():
             "WANDB_ENTITY and WANDB_PROJECT must be set. "
             "Add them to .env or export before running."
         )
-    logger = WandbLogger(
+    wandb_logger = WandbLogger(
         entity=wandb_entity,
         project=wandb_project,
         name=config["run_name"],
@@ -186,26 +151,28 @@ def main():
         mode=os.environ.get("WANDB_MODE", "online"),
         config=config,
     )
+    # name="" version="" so metrics.csv lands directly in output_dir,
+    # not output_dir/lightning_logs/version_0/metrics.csv.
+    csv_logger = CSVLogger(save_dir=str(output_dir), name="", version="")
 
+    limit = args.limit_batches if args.limit_batches > 0 else 1.0
     trainer = pl.Trainer(
         max_epochs=config["max_epochs"],
         callbacks=callbacks,
-        logger=logger,
+        logger=[wandb_logger, csv_logger],
         accelerator="auto",
         devices="auto",
         num_sanity_val_steps=2,
-        fast_dev_run=args.fast_dev_run if args.fast_dev_run > 0 else False,
+        limit_train_batches=limit,
+        limit_val_batches=limit,
+        limit_test_batches=limit,
     )
 
     trainer.fit(lightning_module, datamodule=datamodule)
-    # ckpt_path=None tests the current in-memory weights (whatever epoch
-    # EarlyStopping stopped at), not the best val_loss checkpoint
-    # ModelCheckpoint actually saved -- GaussianNLLLoss's variance term can
+    # ckpt_path="best" (not "last"): GaussianNLLLoss's variance term can
     # spike val_loss well above its own best epoch late in training, so
-    # "best" and "last" can differ a lot. fast_dev_run disables checkpoint
-    # saving entirely, so "best" isn't available there.
-    ckpt_path = "best" if not args.fast_dev_run else None
-    trainer.test(lightning_module, datamodule=datamodule, ckpt_path=ckpt_path)
+    # "best" and "last" can differ a lot.
+    trainer.test(lightning_module, datamodule=datamodule, ckpt_path="best")
 
 
 if __name__ == "__main__":

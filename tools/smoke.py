@@ -1,23 +1,27 @@
 """
 Smoke-test scripts/train_partition.py end to end, on real data, with
---fast_dev_run 1 (one train/val/test batch each) -- the only thing that
-exercises main() at all; neither pytest nor tools/equivalence.py ever call
-it (see docs/open_issues.md).
+--limit_batches 1 and max_epochs: 1 (one real train/val/test batch, with
+logging and checkpointing ACTIVE -- unlike --fast_dev_run, which Lightning
+documents as suppressing both) -- the only thing that exercises main() at
+all; neither pytest nor tools/equivalence.py ever call it (see
+docs/open_issues.md).
 
 Six cases: the three committed loss variants with mode: full, plus
 mode: local_only and mode: remote_only with the committed loss
 (full_gnll_quantile_v2_landfill), plus land_fill_mode: zero with mode: full.
-local_only/remote_only/zero_fill need their own run_name (so their output
-dirs don't collide with mode: full's) and, for the first two, their own
-mode; this script builds those three temporary configs itself, from the
-real committed yaml, in a throwaway directory -- nothing under configs/ or
-sandbox/ is read-written for them.
+Every case gets its own temporary yaml (run_name + max_epochs: 1 override,
+and mode/land_fill_mode for the three non-base cases) so none of them touch
+the real committed yaml files, configs/, or sandbox/.
+
+After each case, checks that output_dir has: a checkpoint, metrics.csv,
+resolved_config.yaml, model_config.json.
 
   python tools/smoke.py
 
 Requires: MHW_DATA_FILE, MHW_CLIM_FILE (real files). Sets its own
-MHW_EXPERIMENTS_DIR (a temp dir, discarded after the run) and
-WANDB_MODE=disabled (no real WandB writes, local or remote).
+MHW_EXPERIMENTS_DIR and WANDB_MODE=disabled (no real WandB writes, local or
+remote). Everything -- including each case's ~50 MB checkpoint -- is
+written under one temp directory, deleted when this script exits.
 """
 
 import copy
@@ -60,7 +64,7 @@ def _run_case(config_path, env):
             str(TRAIN_SCRIPT),
             "--config",
             str(config_path),
-            "--fast_dev_run",
+            "--limit_batches",
             "1",
         ],
         cwd=REPO,
@@ -84,6 +88,16 @@ def _extract_losses(stdout):
     return train, val, test
 
 
+def _check_artifacts(run_dir):
+    checks = {
+        "checkpoint": any((run_dir / "checkpoints").glob("*.ckpt")),
+        "metrics.csv": (run_dir / "metrics.csv").exists(),
+        "resolved_config.yaml": (run_dir / "resolved_config.yaml").exists(),
+        "model_config.json": (run_dir / "model_config.json").exists(),
+    }
+    return checks
+
+
 def main():
     for var in ("MHW_DATA_FILE", "MHW_CLIM_FILE"):
         if not os.environ.get(var):
@@ -97,50 +111,69 @@ def main():
         env["WANDB_PROJECT"] = "smoke"
         env["WANDB_MODE"] = "disabled"
 
-        cases = [(label, path) for label, path in BASE_CONFIGS.items()]
-
         quantile_cfg = _load(BASE_CONFIGS["full_gnll_quantile"])
+
+        cases = []
+        for label, path in BASE_CONFIGS.items():
+            cfg = _load(path)
+            cfg["max_epochs"] = 1
+            cfg_path = tmp / f"{label}.yaml"
+            _write(cfg, cfg_path)
+            cases.append((label, cfg_path, cfg["run_name"]))
 
         local_cfg = copy.deepcopy(quantile_cfg)
         local_cfg["run_name"] = "smoke_local_only_fold0"
         local_cfg["mode"] = "local_only"
+        local_cfg["max_epochs"] = 1
         local_path = tmp / "local_only.yaml"
         _write(local_cfg, local_path)
-        cases.append(("local_only", local_path))
+        cases.append(("local_only", local_path, local_cfg["run_name"]))
 
         remote_cfg = copy.deepcopy(quantile_cfg)
         remote_cfg["run_name"] = "smoke_remote_only_fold0"
         remote_cfg["mode"] = "remote_only"
+        remote_cfg["max_epochs"] = 1
         remote_path = tmp / "remote_only.yaml"
         _write(remote_cfg, remote_path)
-        cases.append(("remote_only", remote_path))
+        cases.append(("remote_only", remote_path, remote_cfg["run_name"]))
 
         zero_cfg = copy.deepcopy(quantile_cfg)
         zero_cfg["run_name"] = "smoke_zero_fill_fold0"
         zero_cfg["land_fill_mode"] = "zero"
+        zero_cfg["max_epochs"] = 1
         zero_path = tmp / "zero_fill.yaml"
         _write(zero_cfg, zero_path)
-        cases.append(("zero_fill", zero_path))
+        cases.append(("zero_fill", zero_path, zero_cfg["run_name"]))
 
         results = []
-        for label, config_path in cases:
+        for label, config_path, run_name in cases:
             print(f"=== {label} ===", flush=True)
             code, elapsed, stdout, stderr = _run_case(config_path, env)
             train, val, test = _extract_losses(stdout)
-            results.append((label, code, elapsed, train, val, test))
+            run_dir = tmp / "experiments" / "partition" / run_name
+            checks = _check_artifacts(run_dir) if code == 0 else {}
+            results.append((label, code, elapsed, train, val, test, checks))
             if code != 0:
                 print(stdout[-3000:])
                 print(stderr[-3000:])
 
     print()
-    header = f"{'case':<20} {'exit':<5} {'elapsed_s':<10} {'train_loss':<12} {'val_loss':<10} {'test_loss':<12}"
+    header = (
+        f"{'case':<20} {'exit':<5} {'elapsed_s':<10} {'train_loss':<12} "
+        f"{'val_loss':<10} {'test_loss':<20} {'artifacts missing'}"
+    )
     print(header)
-    for label, code, elapsed, train, val, test in results:
+    all_ok = True
+    for label, code, elapsed, train, val, test, checks in results:
+        missing = [name for name, ok in checks.items() if not ok]
+        if code != 0 or missing:
+            all_ok = False
         print(
-            f"{label:<20} {code:<5} {elapsed:<10.1f} {train:<12} {val:<10} {test:<12}"
+            f"{label:<20} {code:<5} {elapsed:<10.1f} {train:<12} {val:<10} "
+            f"{test:<20} {missing or '-'}"
         )
 
-    if any(code != 0 for _, code, *_ in results):
+    if not all_ok:
         sys.exit(1)
 
 
