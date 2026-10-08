@@ -9,7 +9,7 @@ NS box: lat[100:127], lon[150:187]
 
 import torch
 
-from src.data.masking import _NS_LAT, _NS_LON, mask_local, mask_remote
+from src.data.masking import NS_LAT, NS_LON, mask_local, mask_remote
 
 BATCH, C, W, LAT, LON = 1, 3, 60, 141, 201
 
@@ -23,13 +23,13 @@ def _ones():
 
 def test_remote_zeros_ns_box():
     out = mask_remote(_ones())
-    assert out[:, :, :, _NS_LAT, _NS_LON].abs().max().item() == 0.0
+    assert out[:, :, :, NS_LAT, NS_LON].abs().max().item() == 0.0
 
 
 def test_remote_preserves_outside_ns():
     out = mask_remote(_ones())
     outside = out.clone()
-    outside[:, :, :, _NS_LAT, _NS_LON] = 1.0  # ignore NS box
+    outside[:, :, :, NS_LAT, NS_LON] = 1.0  # ignore NS box
     assert outside.min().item() == 1.0
 
 
@@ -45,13 +45,13 @@ def test_remote_does_not_modify_input():
 def test_local_zeros_outside_ns():
     out = mask_local(_ones())
     outside = out.clone()
-    outside[:, :, :, _NS_LAT, _NS_LON] = 0.0  # ignore NS box
+    outside[:, :, :, NS_LAT, NS_LON] = 0.0  # ignore NS box
     assert outside.abs().max().item() == 0.0
 
 
 def test_local_preserves_ns_box():
     out = mask_local(_ones())
-    assert out[:, :, :, _NS_LAT, _NS_LON].min().item() == 1.0
+    assert out[:, :, :, NS_LAT, NS_LON].min().item() == 1.0
 
 
 # ── consistency ───────────────────────────────────────────────────────────────
