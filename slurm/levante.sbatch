@@ -92,7 +92,9 @@ export WANDB_MODE=offline
 # Always activate this venv, regardless of whatever venv/conda env (or
 # none) the submitting shell already had active: `source activate` prepends
 # this venv's bin to PATH unconditionally, so it wins over anything
-# inherited.
+# inherited. PYTHONPATH is not touched by activate, so an inherited one
+# could still shadow this venv's packages on import -- cleared explicitly.
+unset PYTHONPATH
 set +u
 source /work/bg1446/u241379/exprecursors/venv/bin/activate
 set -u
@@ -106,6 +108,10 @@ echo "node: $(hostname)"
 echo "GPU: $(nvidia-smi --query-gpu=name,uuid --format=csv,noheader)"
 echo "python: $(which python)"
 python -c "import torch; print(f'torch {torch.__version__}, cuda available: {torch.cuda.is_available()}')"
+# Not touched (unlike PYTHONPATH): torch bundles its own CUDA libs, but an
+# inherited LD_LIBRARY_PATH from a module loaded in the submitter's shell
+# could still shadow them -- printed so that's visible if it ever happens.
+echo "LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-<unset>}"
 
 python scripts/train_partition.py --config "$CONFIG_YAML" --fold "$FOLD" \
     --limit_batches "$LIMIT_BATCHES"
