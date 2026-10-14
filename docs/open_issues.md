@@ -92,11 +92,12 @@ not the final results.
 at Dec 31/Jan 1, and test years are non-contiguous, so almost every test year
 is adjacent to a train year.
 
-## Bucket assignment is not balanced
-Bucket assignment is plain round-robin (`i % n_folds`), so bucket 0 always
-gets the most extreme year of each group of five: test MHW days per fold
-decrease systematically (261, 224, 207, 184, 171). A serpentine assignment
-would balance better.
+## Bucket assignment is not balanced (resolved 14 Oct 2026)
+Bucket assignment was plain round-robin (`i % n_folds`), so bucket 0 always
+got the most extreme year of each group of five: test MHW days per fold
+decreased systematically (261, 224, 207, 184, 171). Resolved: serpentine
+assignment with the Oliver detection, test MHW days 404, 361, 352, 357, 348
+(max-min 1.9 pp). See the 14 Oct section.
 
 ## #57 P2-2, precise statement
 Input normalisation stats use a contiguous time slice from the first to the
@@ -255,15 +256,43 @@ without the delta): update it.
 
 ### Detection decides the split
 `datamodule._mhw_days_per_year` ranks years by MHW days, so the detection
-decides which years are train/val/test. PENDING: decide whether the current
-years are frozen in the yamls or the round-robin is recomputed; either way,
-redo this balance analysis before Round A. Related: serpentine vs round-robin
-assignment (Round B).
+decides which years are train/val/test. Whether to freeze the current
+years or recompute the assignment was pending; decided below.
 
-Split: PENDING. Freezing the current years is not justified on its own (they
-came from the faulty detection), even though they are balanced under the
-corrected definition (2.0 pp). A serpentine (zigzag) assignment with the Oliver
-detection is being evaluated as a procedure that can be justified from scratch.
+Split: DECIDED (14 Oct 2026). Freezing the current years was not justified on
+its own (they came from the faulty detection), even though they are balanced
+under the corrected definition (2.0 pp). Adopted instead: serpentine (zigzag)
+assignment of the years ranked by Oliver MHW days, ties by increasing year
+(`datamodule._rank_years`, `_serpentine_buckets`). Test MHW days per fold
+404, 361, 352, 357, 348 (13.8, 12.4, 12.1, 12.2, 11.9 %, max-min 1.9 pp); val is
+the same list shifted by one fold (1.9 pp); train max-min 0.7 pp. 13 of the 40
+years have 0 MHW days, so their order comes from the tie-break alone.
+
+| Fold | Test years | Val years |
+|---|---|---|
+| 0 | 1987, 1988, 1989, 1997, 2013, 2014, 2019, 2022 | 1986, 1991, 2002, 2009, 2011, 2012, 2016, 2023 |
+| 1 | 1986, 1991, 2002, 2009, 2011, 2012, 2016, 2023 | 1985, 1990, 1993, 2004, 2007, 2010, 2015, 2018 |
+| 2 | 1985, 1990, 1993, 2004, 2007, 2010, 2015, 2018 | 1994, 2000, 2001, 2005, 2006, 2008, 2017, 2024 |
+| 3 | 1994, 2000, 2001, 2005, 2006, 2008, 2017, 2024 | 1992, 1995, 1996, 1998, 1999, 2003, 2020, 2021 |
+| 4 | 1992, 1995, 1996, 1998, 1999, 2003, 2020, 2021 | 1987, 1988, 1989, 1997, 2013, 2014, 2019, 2022 |
+
+Consequences:
+- Equivalence check: EXCEPTION approved by the owner (14 Oct 2026).
+  `tools/equivalence.py --check` fails by design after this change, because
+  the split (and with it the test samples and the normalisation statistics)
+  changes; the model code does not. Order: commit the code, smoke test, the
+  owner retrains fold 0, point `MHW_REFERENCE_CKPT_DIR` at the new checkpoint,
+  `--generate`, `--check`, commit the new reference.
+- The fold-0 retrain of job 27965937 (r 0.827) used the old split and is no
+  longer comparable fold by fold. Round A is compared with the mean of the 5
+  August folds, not fold by fold.
+- `docs/history/narrative.md` must update the 52 events: with the Oliver
+  detection there are 80 events (1822 MHW days) on the training target (with
+  the #40 delta), 75 events (1823 days) on the target without the delta.
+- `load_ns_mean_clim_smooth_delta` is unchanged: the leap-year doy shift of
+  the delta (finding (a) below) stays open. It keeps its default arguments
+  (`smooth_days=31`, `clim_file=CLIM_FILE`) TEMPORARILY, against the
+  no-defaults rule, until the leap-day of the delta is fixed.
 
 Balance, MHW days in the 8 test years of each fold (calendar days; an event is
 counted in every split where it has at least one day). Computed with a temporary
