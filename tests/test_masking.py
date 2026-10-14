@@ -23,7 +23,7 @@ def _ones():
 
 def test_remote_zeros_ns_box():
     out = mask_remote(_ones())
-    assert out[:, :, :, NS_LAT, NS_LON].abs().max().item() == 0.0
+    assert out[:, :, :, NS_LAT, NS_LON].max().item() == 0.0
 
 
 def test_remote_preserves_outside_ns():
@@ -46,7 +46,7 @@ def test_local_zeros_outside_ns():
     out = mask_local(_ones())
     outside = out.clone()
     outside[:, :, :, NS_LAT, NS_LON] = 0.0  # ignore NS box
-    assert outside.abs().max().item() == 0.0
+    assert outside.max().item() == 0.0
 
 
 def test_local_preserves_ns_box():
