@@ -1,4 +1,4 @@
-"""Checkpoint selection utilities."""
+"""Save/load the exact model config of a run and pick its best checkpoint."""
 
 import inspect
 import json
@@ -39,7 +39,7 @@ def load_model_config(run_dir: Path) -> dict:
     """Return the exact CNNLSTMModel kwargs for the run in run_dir, read
     from run_dir/model_config.json (written by save_model_config at train
     time). Raises if the file is missing a key CNNLSTMModel needs, or has
-    an extra one — no defaults are filled in.
+    an extra one; no defaults are filled in.
     """
     path = Path(run_dir) / "model_config.json"
     if not path.exists():
@@ -58,7 +58,7 @@ def load_model_config(run_dir: Path) -> dict:
 def best_ckpt(ckpt_dir: Path) -> Path:
     """Return the checkpoint with the lowest val_loss in ckpt_dir. Raises if
     ckpt_dir mixes checkpoints from more than one training run (any
-    "-vN.ckpt" file -- PyTorch Lightning adds that suffix instead of
+    "-vN.ckpt" file: PyTorch Lightning adds that suffix instead of
     overwriting when a filename already exists) or has no checkpoints at
     all.
     """
