@@ -50,16 +50,15 @@ was chosen empirically.
 `land_mask`) exists but the canonical file remains `merged_daily.nc`.
 
 ## #30 / #16 — silent architecture mismatch when loading checkpoints
-`CNNLSTM_DEFAULTS` in `src/utils/checkpoints.py` (cnn_features 128, lstm_hidden
-256, dropout 0.3, ...) differs from the defaults in `scripts/train_partition.py`
-(256, 512, 0.2, ...). A config that omits a key gets a different architecture
-depending on which code path reads it, and loading with `strict=False` hides the
-resulting shape mismatch. Always rebuild the model from `model_config.json`.
+`CNNLSTMModel` has no constructor defaults, `src/utils/checkpoints.py` reads
+its keys from the constructor signature, and `load_model_config` raises on a
+missing or extra key; nothing loads with `strict=False`. Always rebuild the
+model from `model_config.json`.
 
-## Training hyperparameters fixed in code, not in the yaml
-`scripts/train_partition.py` hardcodes `EarlyStopping(patience=30)` and
-`ModelCheckpoint(save_top_k=3)` — neither is a config key, so changing them
-means editing the script, not the yaml. Not currently exposed as options.
+## Training hyperparameters in the yaml
+`EarlyStopping` patience and `ModelCheckpoint(save_top_k)` are read from the
+yaml keys `early_stopping_patience` and `save_top_k`
+(`scripts/train_partition.py:248-261`).
 
 ## `kfold`-mode results are only reproducible from `v1-exploracion`
 `src/data/datamodule.py` now supports `split_mode: stratified_kfold` only. The
@@ -96,7 +95,7 @@ is adjacent to a train year.
 ## Bucket assignment is not balanced
 Bucket assignment is plain round-robin (`i % n_folds`), so bucket 0 always
 gets the most extreme year of each group of five: test MHW days per fold
-decrease systematically (264, 226, 212, 196, 163). A serpentine assignment
+decrease systematically (261, 224, 207, 184, 171). A serpentine assignment
 would balance better.
 
 ## #57 P2-2, precise statement
@@ -113,12 +112,11 @@ zero act as landmarks). Test: add lat/lon coordinate channels, or avoid the
 global average pool, and compare full vs local.
 
 ## Round B: the quantile head is never evaluated
-`test_step` only evaluates the mean head; `q_pred` is neither scored nor
-saved, and test predictions are saved only as a PNG.
+`test_step` only evaluates the mean head; `q_pred` is saved in
+`test_predictions.npz` but not scored.
 
 ## Round B: more hyperparameters fixed in code
-`weight_decay` 1e-4, `log_var` clamp +-10, head hidden size 64,
-`EarlyStopping` patience 30, `save_top_k` 3.
+`log_var` clamp +-10, head hidden size 64.
 
 ## Round B: nearest fill covers all land, not just the coast
 Nearest fill covers ALL land pixels, not only the coast: continents become
@@ -152,7 +150,7 @@ code; reason given).
 | 13 | Forbidden `merged_daily_deepSST.nc` | RESUELTO | `paths.py`, `CLAUDE.md` | Data file only from `$MHW_DATA_FILE`; rule in CLAUDE.md. |
 | 14 | Gulf Stream narrative superseded | DUDA | none | Claim about the paper text, not about code. |
 | 15 | `LazyDataset.is_land` attribute name | RESUELTO | `dataset.py:50` | Attribute exists; the scripts that misused it are gone. |
-| 16 | Hardcoded architecture at checkpoint load | RESUELTO | `checkpoints.py:12-55`, `cnn_lstm.py:113-125` | No constructor defaults, keys read from the signature, `load_model_config` raises on missing/extra keys, no `strict=False`. The "#30 / #16" section above is stale (`CNNLSTM_DEFAULTS` no longer exists). |
+| 16 | Hardcoded architecture at checkpoint load | RESUELTO | `checkpoints.py:12-55`, `cnn_lstm.py:113-125` | No constructor defaults, keys read from the signature, `load_model_config` raises on missing/extra keys, no `strict=False`. |
 | 17 | W&B identifiers hardcoded | RESUELTO | `train_partition.py:265-271` | From `WANDB_ENTITY`/`WANDB_PROJECT`, raises if unset. |
 | 18 | "Vectorised" comment on a loop | OBSOLETO | none | `_compute_trend` no longer exists. |
 | 19 | `to_anom > 0` as MHW label | OBSOLETO | none | No evaluation code in `rebuild`. |
@@ -207,14 +205,7 @@ code; reason given).
 | 65 | No purge at Dec 31/Jan 1 | RONDA B | `datamodule.py:117-126` | See #65 above. |
 | 66 | `window_size: 60` unjustified | RONDA B | yamls | See #66 above. |
 
-Stale text found in this file while triaging (not edited here): the "#30 / #16"
-section (`CNNLSTM_DEFAULTS` no longer exists), "Training hyperparameters fixed in
-code" and "Round B: more hyperparameters fixed in code" (`early_stopping_patience`,
-`save_top_k` and `weight_decay` are yaml keys now; the `log_var` clamp and the
-head size 64 are still in code), "the quantile head is never evaluated"
-(`q_pred` is now saved in `test_predictions.npz`, though still not scored), and
-the test MHW days in "Bucket assignment is not balanced" (264, 226, 212, 196, 163;
-the current split gives 261, 224, 207, 184, 171).
+Stale text found in this file while triaging was corrected in a follow-up commit.
 
 ## Revisión línea a línea (Cris), 14 oct 2026
 
@@ -268,6 +259,11 @@ decides which years are train/val/test. PENDING: decide whether the current
 years are frozen in the yamls or the round-robin is recomputed; either way,
 redo this balance analysis before Round A. Related: serpentine vs round-robin
 assignment (Round B).
+
+Split: PENDING. Freezing the current years is not justified on its own (they
+came from the faulty detection), even though they are balanced under the
+corrected definition (2.0 pp). A serpentine (zigzag) assignment with the Oliver
+detection is being evaluated as a procedure that can be justified from scratch.
 
 Balance, MHW days in the 8 test years of each fold (calendar days; an event is
 counted in every split where it has at least one day). Computed with a temporary
