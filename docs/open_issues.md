@@ -215,3 +215,85 @@ head size 64 are still in code), "the quantile head is never evaluated"
 (`q_pred` is now saved in `test_predictions.npz`, though still not scored), and
 the test MHW days in "Bucket assignment is not balanced" (264, 226, 212, 196, 163;
 the current split gives 261, 224, 207, 184, 171).
+
+## Revisión línea a línea (Cris), 14 oct 2026
+
+### Plan
+- Line by line: `dataset.py`, `hobday.py`, `cnn_lstm.py` (model and loss),
+  `datamodule.py`.
+- By blocks: `train_partition.py`, `checkpoints.py`, `levante.sbatch`.
+- Not read: `equivalence.py`, `smoke.py`, tests.
+- Round A (5 folds) is launched ONLY when this review is finished.
+
+### Reviewed
+- `masking.py` + `test_masking.py` (`ef4258b`, `302f4ff`). Do NOT rename
+  `mask_remote`/`mask_local`. Round B: masking with 0 is debatable; check
+  robustness with cropping and permutation.
+- `paths.py` (`0d79159`). `MHW_EXPERIMENTS_DIR` is required.
+  `MHW_REFERENCE_CKPT_DIR` (used by `tools/equivalence.py`) is missing from
+  `.env.example`.
+- `checkpoints.py` (`0c5eeb4`, by blocks, docstrings only).
+
+### `hobday.py`: IN REVIEW
+Findings:
+1. `load_ns_p90` averages the per-pixel p90 of the 0.1° climatology over the
+   box and compares it with the box-mean anomaly. Mean of percentiles is not the
+   percentile of the mean: the threshold is biased by about +0.16 °C (+0.04 to
+   +0.30 °C depending on doy), and only 6.2 % of reference-period days exceed
+   it (Oliver threshold on the box-mean series: 10.1 %).
+2. `apply_hobday` fills gaps <=2 days BEFORE requiring 5 days; Oliver requires
+   >=5 days first and then joins events across gaps <=2. Example: `XXX.XX` is
+   an MHW with the current code and is not one with Oliver.
+3. The docstring says +-15 days. Typo: the climatology uses
+   `ydrunpctl,90,11` and `ydrunmean,11` (+-5).
+4. The docstring of `load_ns_mean_clim_smooth_delta` refers to `mean_clim.nc`
+   (the file is `sst_climatology_doy.nc`) and to `known_issues.md` (only in
+   `docs/history/`; the numbers are in #40 above).
+5. Climatology at 0.1° (700 x 1000), inputs at 0.5° (141 x 201) (#57 P2-3).
+
+DECISION: MHW detection follows Oliver's reference implementation of Hobday et
+al. (2016) (`marineHeatWaves.detect`, github.com/ecjoliver/marineHeatWaves,
+commit `d7292bf`), reimplemented in our own words (the package is GPL-3) and
+cited. Threshold computed on the series being analysed (the box-mean target),
+window +-5 days by index, linear `nanpercentile` p90, periodic 31-day smoothing,
+reference 1985-2014, first >=5 days then join gaps <=2, doy for a 365-day
+calendar without Feb 29. This is a DELIBERATE change of definition: on the
+training target (with the #40 delta), MHW days 1047 -> 1822 and events
+55 -> 80, 1985-2024. The narrative says 52 events (current code on the target
+without the delta): update it.
+
+### Detection decides the split
+`datamodule._mhw_days_per_year` ranks years by MHW days, so the detection
+decides which years are train/val/test. PENDING: decide whether the current
+years are frozen in the yamls or the round-robin is recomputed; either way,
+redo this balance analysis before Round A. Related: serpentine vs round-robin
+assignment (Round B).
+
+Balance, MHW days in the 8 test years of each fold (calendar days; an event is
+counted in every split where it has at least one day). Computed with a temporary
+script outside git on the training target; the first row reproduces the split
+of job 27965937 exactly.
+
+| Split | Detection | Test MHW days f0-f4 | Test events f0-f4 | Test MHW % f0-f4 | max-min |
+|---|---|---|---|---|---|
+| current years | current | 261, 224, 207, 184, 171 | 11, 10, 13, 12, 11 | 8.9, 7.7, 7.1, 6.3, 5.9 | 3.1 pp |
+| current years | Oliver | 388, 379, 367, 357, 331 | 18, 17, 18, 18, 15 | 13.3, 13.0, 12.6, 12.2, 11.3 | 2.0 pp |
+| recomputed with Oliver | current | 209, 203, 212, 223, 200 | 12, 13, 14, 9, 9 | 7.2, 7.0, 7.3, 7.6, 6.8 | 0.8 pp |
+| recomputed with Oliver | Oliver | 454, 389, 352, 329, 298 | 20, 19, 15, 17, 15 | 15.5, 13.3, 12.1, 11.3, 10.2 | 5.3 pp |
+
+With the current years and the Oliver detection no fold is clearly unbalanced
+(11.3-13.3 % test MHW days, 15-18 events). Recomputing the round-robin with
+Oliver gives a WORSE test balance (5.3 pp, steadily decreasing from fold 0 to
+fold 4), the known round-robin bias.
+
+### Other open findings
+- (a) Leap-year doy shift: the calendar has no Feb 29 (14,600 days) but
+  `dayofyear` goes up to 366, so in leap years every day from Mar 1 is indexed
+  one doy ahead, and the `>= 365 -> 365` clamp merges Dec 30 and Dec 31. Affects
+  the #40 target delta (`dataset.py:131-135`) and the current threshold
+  (`datamodule.py:26-30`). How CDO indexed `sst_climatology_doy.nc` is not
+  verified.
+- (b) The target box (51-62.5 N, 5.2 W-13.2 E at 0.1°) differs from the
+  masking/hobday box (50-63 N, 5 W-13 E) (#57 P2-1).
+- (c) The absolute box-mean SST is not stored in any file; only the anomaly
+  `target` is.
