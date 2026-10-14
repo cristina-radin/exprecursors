@@ -5,6 +5,10 @@ Importing this module points MHW_DATA_FILE / MHW_CLIM_FILE at the synthetic
 files (src.utils.paths reads them at import time), so tests exercise the real
 LazyDataset / LazyDataModule code without any real data.
 
+Calendar as in merged_daily.nc: 365-day years without Feb 29 (dayofyear
+still runs to 366 in leap years), covering the MHW reference period
+1985-2014 (src/utils/hobday.py REF_YEARS).
+
 Grid: 6 x 8 pixels. Two land masks that differ on purpose:
   land_mask          (SST/atmosphere): land = column 0 and pixel (2, 3)
   land_mask_tbottom  (ptho_bot only) : land = column 0 and pixel (4, 5)
@@ -29,7 +33,7 @@ os.environ["MHW_DATA_FILE"] = str(DATA_FILE)
 os.environ["MHW_CLIM_FILE"] = str(CLIM_FILE)
 
 NLAT, NLON = 6, 8
-YEARS = range(2000, 2012)
+YEARS = range(1985, 2015)
 WINDOW, LEAD = 5, 2
 VARIABLES = ["ptho_bot", "u10", "v10", "msl", "ssr"]
 LAND_MASK_LAND_PIXELS = [(r, 0) for r in range(NLAT)] + [(2, 3)]
@@ -47,6 +51,7 @@ def _mask(land_pixels):
 def _build_data_file(path: Path, with_tbottom: bool) -> None:
     rng = np.random.default_rng(0)
     time = pd.date_range(f"{YEARS[0]}-01-01", f"{YEARS[-1]}-12-31", freq="D")
+    time = time[~((time.month == 2) & (time.day == 29))]
     n = len(time)
     shape = (n, NLAT, NLON)
     data = {v: rng.normal(size=shape).astype(np.float32) for v in VARIABLES}

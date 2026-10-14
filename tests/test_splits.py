@@ -6,12 +6,22 @@ Invariants of split_mode="stratified_kfold" (known_issues.md #1/#42):
   * within a fold, train/val/test year sets are disjoint and cover every year;
   * test years are disjoint across folds and together cover every year;
   * val years differ from fold to fold (the bug kfold had);
-  * the split is deterministic.
+  * the split is deterministic;
+  * years are ranked by MHW days (ties by increasing year) and dealt in
+    serpentine order;
+  * the synthetic target gives years with different MHW-day counts, so the
+    ranking is not just the tie-break.
 """
 
 import pytest
 
-from src.data.datamodule import LazyDataModule
+from src.data.datamodule import (
+    LazyDataModule,
+    _mhw_days_per_year,
+    _rank_years,
+    _serpentine_buckets,
+)
+from src.data.dataset import LazyDataset
 from tests import synthetic as syn
 
 N_FOLDS = 5
@@ -76,3 +86,26 @@ def test_data_dir_key_is_rejected():
     cfg = syn.write_config(data_dir=str(syn.DATA_FILE))
     with pytest.raises(ValueError, match="MHW_DATA_FILE"):
         LazyDataModule(config=cfg)
+
+
+@pytest.mark.parametrize(
+    "n_years, expected",
+    [
+        (10, [[0, 9], [1, 8], [2, 7], [3, 6], [4, 5]]),
+        (12, [[0, 9, 10], [1, 8, 11], [2, 7], [3, 6], [4, 5]]),
+        (15, [[0, 9, 10], [1, 8, 11], [2, 7, 12], [3, 6, 13], [4, 5, 14]]),
+    ],
+)
+def test_serpentine_buckets(n_years, expected):
+    assert _serpentine_buckets(list(range(n_years)), N_FOLDS) == expected
+
+
+def test_rank_years_most_days_first_ties_by_increasing_year():
+    days = {2003: 5, 2001: 5, 2002: 7, 2000: 0, 1999: 0}
+    assert _rank_years(days) == [2002, 2001, 2003, 1999, 2000]
+
+
+def test_synthetic_years_have_different_mhw_day_counts():
+    ds = LazyDataset(str(syn.DATA_FILE), config=syn.write_config())
+    counts = _mhw_days_per_year(ds, list(syn.YEARS))
+    assert len(set(counts.values())) >= len(syn.YEARS) // 2

@@ -1,11 +1,14 @@
 """
 PyTorch Lightning DataModule for the North Sea MHW dataset.
 
-Builds a stratified k-fold split: ranks calendar years by MHW-day count,
-deals them round-robin into n_folds buckets, and uses one bucket as test,
-the next bucket as val, and the rest as train. This keeps MHW-day
-representation balanced across folds and gives every fold a different val
-set.
+Builds a stratified k-fold split: ranks calendar years by MHW-day count
+(most first; ties by increasing year), deals them into n_folds buckets in a
+serpentine order (0, 1, ..., n-1, then n-1, ..., 0, and so on), and uses one
+bucket as test, the next bucket as val, and the rest as train. This keeps
+MHW-day representation balanced across folds and gives every fold a
+different val set. MHW days follow src/utils/hobday.py (Hobday et al. 2016,
+as implemented by Oliver's marineHeatWaves.detect) on the full contiguous
+target series.
 """
 
 from typing import Optional
@@ -14,7 +17,17 @@ import numpy as np
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Subset
 
-from src.utils.hobday import apply_hobday, load_ns_p90
+from src.utils.hobday import (
+    MAX_GAP,
+    MIN_DURATION,
+    PERCENTILE,
+    REF_YEARS,
+    SMOOTH_WIDTH,
+    WINDOW_HALF_WIDTH,
+    detect,
+    noleap_doy,
+    threshold,
+)
 from src.utils.paths import DATA_FILE
 
 from .dataset import LazyDataset
@@ -22,14 +35,34 @@ from .dataset import LazyDataset
 
 def _mhw_days_per_year(full_ds, unique_years):
     """Count MHW days per calendar year in the full target series."""
-    p90 = load_ns_p90()  # (365,)
-    raw_doys = full_ds.doys.copy()
-    raw_doys[raw_doys >= 365] = 365
-    raw_years = full_ds.years
-    raw_target = full_ds.target.numpy()
-    thresh_per_day = p90[raw_doys - 1]
-    mhw_day_bool = apply_hobday(raw_target > thresh_per_day)
-    return {int(y): int(mhw_day_bool[raw_years == y].sum()) for y in unique_years}
+    target = full_ds.target.numpy()
+    years = full_ds.years
+    doys = noleap_doy(full_ds.ds.time.dt.month.values, full_ds.ds.time.dt.day.values)
+    thresh = threshold(
+        target,
+        years,
+        doys,
+        ref_years=REF_YEARS,
+        window_half_width=WINDOW_HALF_WIDTH,
+        percentile=PERCENTILE,
+        smooth_width=SMOOTH_WIDTH,
+    )
+    mhw = detect(target > thresh[doys - 1], min_duration=MIN_DURATION, max_gap=MAX_GAP)
+    return {int(y): int(mhw[years == y].sum()) for y in unique_years}
+
+
+def _rank_years(mhw_days_per_year):
+    """Years sorted by MHW days, most first; ties by increasing year."""
+    return sorted(mhw_days_per_year, key=lambda y: (-mhw_days_per_year[y], y))
+
+
+def _serpentine_buckets(ranked_years, n_folds):
+    """Deal ranked years into n_folds buckets: 0..n-1, then n-1..0, and so on."""
+    buckets = [[] for _ in range(n_folds)]
+    for i, y in enumerate(ranked_years):
+        rnd, pos = divmod(i, n_folds)
+        buckets[pos if rnd % 2 == 0 else n_folds - 1 - pos].append(int(y))
+    return buckets
 
 
 def _print_split(
@@ -110,11 +143,8 @@ class LazyDataModule(pl.LightningDataModule):
         # Rank years by MHW-day count, most extreme first.
         mhw_days_per_year = _mhw_days_per_year(full_ds, unique_years)
 
-        # Deal the ranked years round-robin into n_folds buckets.
-        ranked_years = sorted(unique_years, key=lambda y: -mhw_days_per_year[int(y)])
-        buckets = [[] for _ in range(n_folds)]
-        for i, y in enumerate(ranked_years):
-            buckets[i % n_folds].append(int(y))
+        # Deal the ranked years into n_folds buckets in serpentine order.
+        buckets = _serpentine_buckets(_rank_years(mhw_days_per_year), n_folds)
 
         # This fold's bucket is test, the next bucket is val, the rest is train.
         test_years = set(buckets[fold])
