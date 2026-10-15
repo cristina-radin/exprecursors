@@ -208,6 +208,8 @@ code; reason given).
 
 Stale text found in this file while triaging was corrected in a follow-up commit.
 
+Counts (69 rows): RESUELTO 30, OBSOLETO 28, ABIERTO 4, RONDA B 3, DUDA 4.
+
 ## Revisión línea a línea (Cris), 14 oct 2026
 
 ### Plan
@@ -222,8 +224,8 @@ Stale text found in this file while triaging was corrected in a follow-up commit
   `mask_remote`/`mask_local`. Round B: masking with 0 is debatable; check
   robustness with cropping and permutation.
 - `paths.py` (`0d79159`). `MHW_EXPERIMENTS_DIR` is required.
-  `MHW_REFERENCE_CKPT_DIR` (used by `tools/equivalence.py`) is missing from
-  `.env.example`.
+  `MHW_REFERENCE_CKPT_DIR` (used by `tools/equivalence.py`) was missing from
+  `.env.example`; added 15 Oct 2026.
 - `checkpoints.py` (`0c5eeb4`, by blocks, docstrings only).
 
 ### `hobday.py`: IN REVIEW
@@ -283,9 +285,23 @@ Consequences:
   changes; the model code does not. Order: commit the code, smoke test, the
   owner retrains fold 0, point `MHW_REFERENCE_CKPT_DIR` at the new checkpoint,
   `--generate`, `--check`, commit the new reference.
+  CLOSED (15 Oct 2026): reference regenerated (`--generate --force`) from job
+  28138143 (code at `725217a`, zigzag split), best checkpoint epoch 10
+  (`cnn-lstm-epoch=10-val_loss=0.0212.ckpt`), copied to
+  `/work/bg1446/u241379/reference_ckpt_zigzag_725217a`. `--check`: "OK:
+  bit-for-bit identical". Fold 0 zigzag: r 0.8715, MAE 0.323 °C (test set of
+  that fold only). The check is back to being required before every commit.
 - The fold-0 retrain of job 27965937 (r 0.827) used the old split and is no
   longer comparable fold by fold. Round A is compared with the mean of the 5
   August folds, not fold by fold.
+- August reference r (0.814) is POOLED: all test predictions of the 5 folds
+  together, in °C, mean head (`scripts/eval_recall_v2_partition.py` in tag
+  `v1-exploracion`, job 29463377), not the mean of the per-fold r. The table
+  column `r_mean` means "mean head", not "mean of folds". Round A reports it the
+  same way (pooled) as the main number, plus mean +- standard deviation of the
+  per-fold r.
+- To fix in `docs/history/narrative.md`: line 1587 calls a pooled r (0.850)
+  "5-fold average".
 - `docs/history/narrative.md` must update the 52 events: with the Oliver
   detection there are 80 events (1822 MHW days) on the training target (with
   the #40 delta), 75 events (1823 days) on the target without the delta.
