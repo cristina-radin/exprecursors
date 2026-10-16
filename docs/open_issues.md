@@ -358,3 +358,69 @@ directory `/work/gg1426/g260161/icon-oes-mm-coast_relaunch2/experiments/hamocc_e
 - The run script lives under `/work/bg1184/` (no access), so the per-year
   forcing file handling was not checked; `ocean-flux.nc` currently points to the
   January 2025 file.
+- `preprocess_all.py`, which built `merged_daily.nc` from the ICON output, lives
+  outside this repo (see `docs/history/data.md`); not read yet. PENDING.
+
+## MHW detection on anomalies (decision, 16 Oct 2026)
+DECISION: MHW days and events are detected on the box-mean SST ANOMALY (the
+training target with the #40 delta), definition A. The pipeline code does not
+change. Hobday et al. (2016) detect on absolute SST (definition B); the two are
+not equivalent:
+- A gives 80 events (1822 days), B gives 64 events (1617 days), 1985-2024;
+  61 of the 80 A events overlap a B event, 62 of the 64 B events overlap an A
+  event. Cause: on absolute SST the +-5-day window pools days with different
+  seasonal means (the climatology changes up to 0.083 °C/day), which widens the
+  distribution. On the anomaly scale the B threshold is higher than the A
+  threshold in winter/spring (+0.06 to +0.11 °C, Dec-May) and lower in Aug-Sep
+  (-0.07, -0.04 °C); max 0.150 °C.
+- `hobday.py` (threshold + detect) matches `marineHeatWaves.detect`
+  (github.com/ecjoliver/marineHeatWaves, commit d7292bf) day by day on the
+  absolute series: 1617 days, 64 events, 0 differing days. Thresholds differ by
+  at most 0.0037 °C within +-15 days of Feb 29 (Oliver smooths a 366-day curve
+  with an interpolated Feb 29; we use 365 days) and by 1e-14 elsewhere.
+- Against NOAA OISST v2.1 on the same box (below), daily F1 is 0.71 for A
+  (model A vs OISST A) and 0.70 for B (model B vs OISST B). A is chosen: it is
+  marginally closer to the observations and it is the scale of the training
+  target. The paper must state that detection is on anomalies, not absolute SST.
+Absolute SST was reconstructed as target (with delta) + box mean (target box,
+`skipna`) of the 31-day-smoothed `mean_clim`; the exact land mask of the target
+is not documented. Scripts: `sandbox/abs_vs_anom.py`, `sandbox/oliver_check.py`.
+
+Documented North Sea MHWs (Mohamed et al. 2023, Frontiers in Marine Science;
+Mohamed et al., EGU24-8900; Jacobs et al. 2024, Frontiers in Marine Science):
+all 7 appear in both A and B, several fragmented. Overlap = days of our event
+inside the documented window.
+| Documented event | A (anomaly) | B (absolute SST) |
+|---|---|---|
+| Jan-May 2007 (S North Sea + Channel, weak) | 24 Nov 2006-9 Feb (78 d) + 16 Feb-14 May (88 d); overlap 40 + 88 d | 25 Nov 2006-8 Feb (76 d) + 16 Feb-11 May (85 d); 39 + 85 d |
+| Jul 2009 (N North Sea, ~3 weeks) | 30 Jun-10 Jul (11 d); 10 d | 1-9 Jul (9 d); 9 d |
+| 31 Mar-9 May 2014 (S North Sea, ~40 d) | 3 pieces: 29 Mar-14 Apr, 20 Apr-2 May, 8-12 May; 15 + 13 + 2 d | 2 pieces: 1-13 Apr, 23-30 Apr; 13 + 8 d |
+| Jun-Aug 2018 | 31 May-12 Jun (13 d) + 17 Jul-16 Aug (31 d); 12 + 31 d | 6-11 Jun (6 d) + 19 Jul-17 Aug (30 d); 6 + 30 d |
+| Aug-Oct 2022 (peak Sep) | 1-15 Sep (15 d) + 24 Oct-14 Dec (52 d); 15 + 8 d | 25 Aug-16 Sep (23 d) + 24 Oct-12 Dec (50 d); 23 + 8 d |
+| 13 Jun-4 Jul 2023 (NW North Sea) | 17 Jun-19 Jul (33 d); 18 d | same as A |
+| Sep 2023 | 5 Sep-19 Oct (45 d); 26 d | same as A |
+Max intensity of the matched events 0.95-1.80 °C. Several documented events
+are regional (southern, northern or north-western North Sea) while our series
+is the mean of the whole box, so they show up shorter or split into pieces
+(2014 most clearly). The documented dates were taken as given, not re-checked
+against the papers. Script: `sandbox/documented_events.py`.
+
+## Validation against NOAA OISST v2.1 (16 Oct 2026)
+OISST v2.1 daily, 0.25°, box 51.125-62.375 N, -5.125-13.125 E (46 x 74 cells,
+1923 ocean), 1985-2024 without Feb 29, cos(lat)-weighted box mean ignoring land
+(r 0.9377 vs 0.9369 unweighted). Data in `/work/bg1446/u241379/data/oisst/`
+(outside the repo, 212 MB): the CoastWatch ERDDAP subset (`ncdcOisst21Agg_LonPM180`)
+misses 1193 days (mostly 1992-1998 and 2021-2024), filled with the original NCEI
+daily files (same product; max |NCEI - ERDDAP| 1.9e-6 °C on common days).
+Same detection (`hobday.py`, same parameters), OISST A = anomaly vs its own
+1985-2014 +-5-day climatology, 31-day smoothed.
+- Daily r of anomalies, model vs OISST: 0.938. Absolute SST: r 0.991 (inflated
+  by the shared seasonal cycle), model bias -0.27 °C.
+- MHW days: model A 1822, OISST A 2303 (OISST B 2081). The model detects fewer
+  MHW days than the satellite.
+- Events (overlap >= 1 day), A vs A: 71/80 model events paired, 73/108 OISST
+  events paired. B vs B: 59/64 and 65/106.
+- Day level, model A vs OISST A (POD / FAR / F1): all 0.64 / 0.19 / 0.71;
+  DEF 0.62 / 0.17 / 0.71; MAM 0.55 / 0.31 / 0.61; JJA 0.65 / 0.26 / 0.69;
+  SON 0.73 / 0.05 / 0.83. Best SON, worst MAM. B vs B: all 0.62 / 0.20 / 0.70.
+Scripts: `sandbox/oisst_fill_ncei.py`, `sandbox/oisst_compare.py`.
