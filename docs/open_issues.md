@@ -292,8 +292,8 @@ Consequences:
   bit-for-bit identical". Fold 0 zigzag: r 0.8715, MAE 0.323 °C (test set of
   that fold only). The check is back to being required before every commit.
 - The fold-0 retrain of job 27965937 (r 0.827) used the old split and is no
-  longer comparable fold by fold. Round A is compared with the mean of the 5
-  August folds, not fold by fold.
+  longer comparable fold by fold. Round A is compared with the pooled 5-fold
+  August result, not fold by fold.
 - August reference r (0.814) is POOLED: all test predictions of the 5 folds
   together, in °C, mean head (`scripts/eval_recall_v2_partition.py` in tag
   `v1-exploracion`, job 29463377), not the mean of the per-fold r. The table

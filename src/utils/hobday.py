@@ -104,7 +104,8 @@ def detect(exceedance: np.ndarray, min_duration: int, max_gap: int) -> np.ndarra
 
     Runs shorter than min_duration are dropped first; the surviving events
     are then joined across gaps of at most max_gap days (gap days become MHW
-    days). E.g. with (5, 2): XXX.XX -> no MHW; XXXXX.XX -> one 8-day event.
+    days). E.g. with (5, 2): XXX.XX -> no MHW; XXXXX.XX -> one 5-day event
+    (the 2-day run is dropped before joining).
     """
     exc = np.asarray(exceedance, dtype=bool)
     edges = np.diff(np.concatenate([[0], exc.astype(np.int8), [0]]))
