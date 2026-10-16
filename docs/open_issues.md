@@ -338,3 +338,23 @@ fold 4), the known round-robin bias.
   masking/hobday box (50-63 N, 5 W-13 E) (#57 P2-1).
 - (c) The absolute box-mean SST is not stored in any file; only the anomaly
   `target` is.
+
+## Data provenance
+Found 16 Oct 2026; not stated in the attributes of `merged_daily.nc` nor in
+`docs/history/data.md`. The SST (`target`, `to_anom`) and `ptho_bot` come from
+an ocean-only ICON-O + HAMOCC hindcast (ICON-OES-MM-COAST, MPI-M/DWD),
+experiment `hamocc_era5_244_cerosinc_pco2_cAR9` by Moritz Mathis (g260161),
+directory `/work/gg1426/g260161/icon-oes-mm-coast_relaunch2/experiments/hamocc_era5_244_cerosinc_pco2_cAR9/`
+(named in the `history` attribute of `ptho_bot_all_data.nc`).
+- Forcing: hourly ERA5 fluxes and wind stress read from file, no coupled
+  atmosphere (`NAMELIST_hamocc_era5_244_cerosinc_pco2_cAR9`, `&ocean_forcing_nml`:
+  `iforc_oce = 12`, `forcing_fluxes_type = 1`, `forcing_windstress_u/v_type = 1`,
+  `forcing_frequency = 3600`; the experiment's `ocean-flux.nc` links to
+  `/work/gg1426/g260161/forcing/era5/icon_244_0158km60/era5_icon_202501_1h.nc`).
+- Run from 1940 (chunks 1940-1959 ... 2020-2024).
+- No temperature relaxation (`type_surfRelax_Temp = 0`); salinity relaxed to
+  WOA13 with a 3-month timescale (`type_surfRelax_Salt = 4`,
+  `para_surfRelax_Salt = 3.0`).
+- The run script lives under `/work/bg1184/` (no access), so the per-year
+  forcing file handling was not checked; `ocean-flux.nc` currently points to the
+  January 2025 file.
