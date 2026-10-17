@@ -1,10 +1,5 @@
 """
-Marine heatwave (MHW) detection after Hobday et al. (2016), "A hierarchical
-approach to defining marine heatwaves", Progress in Oceanography 141, 227-238.
-
-The steps follow the reference implementation by E. C. J. Oliver,
-marineHeatWaves.detect (github.com/ecjoliver/marineHeatWaves, commit d7292bf,
-GPL-3). The code here is our own rewrite of those steps, not a copy:
+Marine heatwave (MHW) detection after Hobday et al. (2016).
 
   1. Threshold: for each day of the year, the PERCENTILE-th percentile
      (np.nanpercentile, linear interpolation) of the series itself, pooled

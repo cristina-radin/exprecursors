@@ -1,13 +1,17 @@
 """
 PyTorch Lightning DataModule for the North Sea MHW dataset.
 
+Main goal of this script: split the years into train/val/test folds so that
+every test set holds a similar share of MHW days, which makes the event-based
+metrics (POD, FAR, F1) comparable across folds. (The model itself never sees
+the MHW labels; it is trained on the continuous target.)
+
 Builds a stratified k-fold split: ranks calendar years by MHW-day count
-(most first; ties by increasing year), deals them into n_folds buckets in a
-serpentine order (0, 1, ..., n-1, then n-1, ..., 0, and so on), and uses one
-bucket as test, the next bucket as val, and the rest as train. This keeps
-MHW-day representation balanced across folds and gives every fold a
-different val set. MHW days follow src/utils/hobday.py (Hobday et al. 2016,
-as implemented by Oliver's marineHeatWaves.detect) on the full contiguous
+(most first; ties by increasing year), deals them into n_folds buckets 
+following this pattern: (0, 1, ..., n-1, then n-1, ..., 0, and so on), 
+and uses one bucket as test, the next bucket as val, and the rest as train. 
+This keeps MHW-day representation balanced across folds and gives every fold a
+different val set. MHW days follow src/utils/hobday.py (Hobday et al. 2016) on the full contiguous
 target series.
 """
 
