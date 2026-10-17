@@ -8,7 +8,12 @@ fixed yet; fixing any of them changes results and needs its own step.
 covers 66 days (60 input + lead 7), so windows and targets of adjacent years in
 different splits overlap. Proposed fix: purge train samples within 66 samples
 (+ optional embargo) of any val/test sample. Estimated cost on the real record:
-11-16 % of the train samples per fold (embargo 0). Not applied.
+11-16 % of the train samples per fold (embargo 0). FIXING BEFORE ROUND A
+(not resolved yet): `_purge` in `datamodule.py` (test > val > train, gap =
+window_size - 1 + lead_time = 66, embargo 0) is implemented, pending a fold-0
+test run. Zigzag split, real data: train -9.1 to -14.3 %, val -4.5 to -11.6 %
+per fold; with embargo 30 (gap 96, not implemented) train -13.3 to -20.8 %,
+val -6.6 to -16.8 %.
 
 ## #57 P2-1 — three definitions of the North Sea box
 - `src/utils/hobday.py`: lat 50-63, lon -5-13 on the 0.1° climatology (p90, mean_clim).
@@ -83,8 +88,8 @@ kfold`) is only reproducible from tag `v1-exploracion`; `rebuild` keeps
 
 ## Plan: retrain everything from `rebuild` once the code is final and reviewed
 Round A: same science, results must match the documented ones within
-fold-to-fold spread. Round B: scientific changes one at a time (#65, #57 P2-1,
-#66). Existing Raven checkpoints (Aug 22 2026) are the comparison baseline,
+fold-to-fold spread. Round B: scientific changes one at a time (#57 P2-1,
+#66; #65 moved to before Round A). Existing Raven checkpoints (Aug 22 2026) are the comparison baseline,
 not the final results.
 
 ## #65, continued: how the leak actually happens in `datamodule.py`
@@ -203,7 +208,7 @@ code; reason given).
 | 62 | Spatial val-year shuffle | OBSOLETO | none | Spatial pipeline not in `rebuild`. |
 | 63 | Spatial `compute_stats` masking | OBSOLETO | none | Spatial pipeline not in `rebuild`. |
 | 64 | Spatial onset uses `tgt>0` | OBSOLETO | none | Spatial pipeline not in `rebuild`. |
-| 65 | No purge at Dec 31/Jan 1 | RONDA B | `datamodule.py:117-126` | See #65 above. |
+| 65 | No purge at Dec 31/Jan 1 | FIXING BEFORE ROUND A | `datamodule.py:79-99`, `:203-205` | `_purge` implemented, not resolved until the fold-0 test run. See #65 above. |
 | 66 | `window_size: 60` unjustified | RONDA B | yamls | See #66 above. |
 
 Stale text found in this file while triaging was corrected in a follow-up commit.

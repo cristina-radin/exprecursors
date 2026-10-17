@@ -13,6 +13,13 @@ and uses one bucket as test, the next bucket as val, and the rest as train.
 This keeps MHW-day representation balanced across folds and gives every fold a
 different val set. MHW days follow src/utils/hobday.py (Hobday et al. 2016) on the full contiguous
 target series.
+
+Purge at split boundaries (open_issues #65): a sample i covers days
+i .. i + window_size - 1 + lead_time, so two samples share days when
+|i - j| <= window_size - 1 + lead_time. Test samples are never removed; val
+samples that share days with a test sample are removed; train samples that
+share days with a kept val sample or a test sample are removed. Embargo 0
+(no extra gap beyond the shared days), a deliberate choice.
 """
 
 from typing import Optional
@@ -69,6 +76,29 @@ def _serpentine_buckets(ranked_years, n_folds):
     return buckets
 
 
+def _purge(train_idx, val_idx, test_idx, gap):
+    """Remove val samples within `gap` of a test sample, then train samples
+    within `gap` of a kept val sample or a test sample. Test is untouched.
+    Returns (train, val) as sorted lists. gap=0 removes nothing (the three
+    index sets are disjoint).
+    """
+
+    def _far_from(idx, protected):
+        idx = np.asarray(sorted(idx), dtype=np.int64)
+        protected = np.asarray(sorted(protected), dtype=np.int64)
+        if len(idx) == 0 or len(protected) == 0:
+            return idx.tolist()
+        pos = np.searchsorted(protected, idx)
+        left = protected[np.clip(pos - 1, 0, len(protected) - 1)]
+        right = protected[np.clip(pos, 0, len(protected) - 1)]
+        dist = np.minimum(np.abs(idx - left), np.abs(idx - right))
+        return idx[dist > gap].tolist()
+
+    val_kept = _far_from(val_idx, test_idx)
+    train_kept = _far_from(train_idx, list(val_kept) + list(test_idx))
+    return train_kept, val_kept
+
+
 def _print_split(
     fold,
     n_folds,
@@ -79,17 +109,25 @@ def _print_split(
     train_indices,
     val_indices,
     test_indices,
+    n_train_purged,
+    n_val_purged,
 ):
-    """Print each split's years, MHW-day counts, and sample counts."""
+    """Print each split's years, MHW-day counts, sample counts and purged samples."""
 
     def _days(years_set):
         return sum(mhw_days_per_year[int(y)] for y in years_set)
 
     print(f"\nStratified k-fold (fold={fold}/{n_folds}):")
     print(f"  train_years ({len(train_years)}): {sorted(train_years)}")
-    print(f"    MHW days: {_days(train_years)}, samples: {len(train_indices)}")
+    print(
+        f"    MHW days: {_days(train_years)}, samples: {len(train_indices)} "
+        f"({n_train_purged} purged)"
+    )
     print(f"  val_years   ({len(val_years)}): {sorted(val_years)}")
-    print(f"    MHW days: {_days(val_years)}, samples: {len(val_indices)}")
+    print(
+        f"    MHW days: {_days(val_years)}, samples: {len(val_indices)} "
+        f"({n_val_purged} purged)"
+    )
     print(f"  test_years  ({len(test_years)}): {sorted(test_years)}")
     print(f"    MHW days: {_days(test_years)}, samples: {len(test_indices)}")
 
@@ -160,6 +198,14 @@ class LazyDataModule(pl.LightningDataModule):
         val_indices = [i for i in range(total_size) if target_years[i] in val_years]
         test_indices = [i for i in range(total_size) if target_years[i] in test_years]
 
+        # Purge samples that share days with a higher-priority split (#65),
+        # before compute_stats so the stats use the purged train set.
+        gap = full_ds.window_size - 1 + full_ds.lead_time
+        n_train, n_val = len(train_indices), len(val_indices)
+        train_indices, val_indices = _purge(
+            train_indices, val_indices, test_indices, gap
+        )
+
         _print_split(
             fold,
             n_folds,
@@ -170,6 +216,8 @@ class LazyDataModule(pl.LightningDataModule):
             train_indices,
             val_indices,
             test_indices,
+            n_train - len(train_indices),
+            n_val - len(val_indices),
         )
 
         full_ds.compute_stats(train_indices)

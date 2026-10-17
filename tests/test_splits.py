@@ -10,14 +10,19 @@ Invariants of split_mode="stratified_kfold" (known_issues.md #1/#42):
   * years are ranked by MHW days (ties by increasing year) and dealt in
     serpentine order;
   * the synthetic target gives years with different MHW-day counts, so the
-    ranking is not just the tie-break.
+    ranking is not just the tie-break;
+  * purge (#65): test untouched, val purged near test, train purged near val
+    and test, gap 0 purges nothing; no kept train/val sample shares days with
+    a higher-priority split in the real setup().
 """
 
+import numpy as np
 import pytest
 
 from src.data.datamodule import (
     LazyDataModule,
     _mhw_days_per_year,
+    _purge,
     _rank_years,
     _serpentine_buckets,
 )
@@ -109,3 +114,39 @@ def test_synthetic_years_have_different_mhw_day_counts():
     ds = LazyDataset(str(syn.DATA_FILE), config=syn.write_config())
     counts = _mhw_days_per_year(ds, list(syn.YEARS))
     assert len(set(counts.values())) >= len(syn.YEARS) // 2
+
+
+# ── purge (#65) ───────────────────────────────────────────────────────────────
+
+
+def test_purge_removes_val_near_test_and_keeps_test():
+    test = list(range(20, 30))
+    train, val = _purge([], list(range(0, 20)), test, gap=5)
+    assert val == list(range(0, 15))
+    assert train == []
+    assert test == list(range(20, 30))  # input not modified
+
+
+def test_purge_removes_train_near_val_and_test():
+    train = list(range(0, 10)) + list(range(40, 50))
+    train, val = _purge(train, list(range(10, 20)), list(range(30, 40)), gap=3)
+    assert val == list(range(10, 20))  # 11 days from test: kept
+    assert train == list(range(0, 7)) + list(range(43, 50))
+
+
+def test_purge_gap_0_removes_nothing():
+    train, val = list(range(0, 10)), list(range(10, 20))
+    assert _purge(train, val, list(range(20, 30)), gap=0) == (train, val)
+
+
+def test_setup_leaves_no_overlap_between_splits(folds):
+    dm = _setup(0)
+    ds = dm.train_dataset.dataset
+    gap = ds.window_size - 1 + ds.lead_time
+    train = np.array(dm.train_dataset.indices)
+    val = np.array(dm.val_dataset.indices)
+    test = np.array(dm.test_dataset.indices)
+    assert np.abs(val[:, None] - test[None, :]).min() > gap
+    assert np.abs(train[:, None] - np.concatenate([val, test])[None, :]).min() > gap
+    target_years = ds.years[test + gap]
+    assert set(target_years.tolist()) == folds[0][2]  # test years unchanged
