@@ -429,3 +429,14 @@ Same detection (`hobday.py`, same parameters), OISST A = anomaly vs its own
   DEF 0.62 / 0.17 / 0.71; MAM 0.55 / 0.31 / 0.61; JJA 0.65 / 0.26 / 0.69;
   SON 0.73 / 0.05 / 0.83. Best SON, worst MAM. B vs B: all 0.62 / 0.20 / 0.70.
 Scripts: `sandbox/oisst_fill_ncei.py`, `sandbox/oisst_compare.py`.
+
+## W&B: wandb 0.25.1 silently fails to sync (19 Oct 2026)
+With the current W&B server, `wandb sync` from wandb 0.25.1 cannot create the
+run: `upsert_run` -> `server_settings_introspection()` gets `None`
+(`CommError: 'NoneType' object has no attribute 'get'`, only in
+`/tmp/debug-cli.<user>.log`), yet the CLI prints "done" and writes the
+`.synced` marker. Job 28205723 (`uks7ze7s`) was lost this way and re-synced
+with 0.31.0 (`--include-synced`) into `mhw-precursors-rebuild`. The venv now
+has wandb 0.31.0 (`requirements.txt`). Any run synced with 0.25.1 must be
+checked with `wandb.Api().run("<entity>/<project>/<id>")`; if missing,
+re-sync it with `--include-synced`.
