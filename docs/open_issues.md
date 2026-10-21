@@ -8,10 +8,11 @@ fixed yet; fixing any of them changes results and needs its own step.
 covers 66 days (60 input + lead 7), so windows and targets of adjacent years in
 different splits overlap. Proposed fix: purge train samples within 66 samples
 (+ optional embargo) of any val/test sample. Estimated cost on the real record:
-11-16 % of the train samples per fold (embargo 0). FIXING BEFORE ROUND A
-(not resolved yet): `_purge` in `datamodule.py` (test > val > train, gap =
-window_size - 1 + lead_time = 66, embargo 0) is implemented, pending a fold-0
-test run. Zigzag split, real data: train -9.1 to -14.3 %, val -4.5 to -11.6 %
+11-16 % of the train samples per fold (embargo 0). FIXED (`bd94997`):
+`_purge` in `datamodule.py` (test > val > train, gap = window_size - 1 +
+lead_time = 66, embargo 0). Fold-0 test run 28205723 (W&B `uks7ze7s`)
+completed with the purge: r 0.8678, MAE 0.298 °C (fold-0 test set only).
+Zigzag split, real data: train -9.1 to -14.3 %, val -4.5 to -11.6 %
 per fold; with embargo 30 (gap 96, not implemented) train -13.3 to -20.8 %,
 val -6.6 to -16.8 %.
 
@@ -30,6 +31,11 @@ days are not inputs of any train sample (fold 0: 4,520 of 13,929 days, 2,291 of
 them in test years). Only the input normalisation constants are affected; the
 target statistics use the exact train indices. Reported effect: std -0.91 %,
 mean +0.0014.
+FIXED (21 Oct 2026, `e13001d`): input stats now use only the days covered by
+train input windows (days i .. i + window_size - 1 for every train index i).
+Fold 0 (zigzag + purge): 14,593 -> 8,096 days, none in val/test years; std
+change ptho_bot -0.75 %, u10 -1.11 %, v10 -0.73 %, msl -1.38 %, ssr +1.99 %;
+mean shifts <= 0.0014 std.
 
 ## #54 — events that span Dec 31 / Jan 1
 Per-year Hobday processing splits real events at the year boundary (3 of 52
@@ -89,25 +95,25 @@ kfold`) is only reproducible from tag `v1-exploracion`; `rebuild` keeps
 ## Plan: retrain everything from `rebuild` once the code is final and reviewed
 Round A: same science, results must match the documented ones within
 fold-to-fold spread. Round B: scientific changes one at a time (#57 P2-1,
-#66; #65 moved to before Round A). Existing Raven checkpoints (Aug 22 2026) are the comparison baseline,
-not the final results.
+#66; #65 fixed before Round A in `bd94997`). Existing Raven checkpoints
+(Aug 22 2026) are the comparison baseline, not the final results.
 
 ## #65, continued: how the leak actually happens in `datamodule.py`
-#65 lives in `datamodule.py`: samples are assigned by target year with no gap
+#65 lived in `datamodule.py`: samples are assigned by target year with no gap
 at Dec 31/Jan 1, and test years are non-contiguous, so almost every test year
-is adjacent to a train year.
+is adjacent to a train year. Fixed in `bd94997` (see #65 above).
 
 ## Bucket assignment is not balanced (resolved 14 Oct 2026)
 Bucket assignment was plain round-robin (`i % n_folds`), so bucket 0 always
 got the most extreme year of each group of five: test MHW days per fold
 decreased systematically (261, 224, 207, 184, 171). Resolved: serpentine
-assignment with the Oliver detection, test MHW days 404, 361, 352, 357, 348
-(max-min 1.9 pp). See the 14 Oct section.
+assignment with the Oliver detection, test MHW days 404, 361, 349, 350, 349
+(max-min 1.9 pp; after the leap-year delta fix, `3161023`). See the 14 Oct section.
 
 ## #57 P2-2, precise statement
-Input normalisation stats use a contiguous time slice from the first to the
-last train sample; with non-contiguous train years this includes val and
-test years. Target stats are train-only. Fix changes numbers.
+Input normalisation stats used a contiguous time slice from the first to the
+last train sample; with non-contiguous train years this included val and
+test years. Target stats are train-only. Fixed in `e13001d` (see above).
 
 ## Round B hypothesis: the global average pool erases location
 The CNN encoder ends in a global average pool, so the network has almost no
@@ -199,7 +205,7 @@ code; reason given).
 | 56 | def2 climatology, onset script, v1 configs | OBSOLETO | none | The three scripts/configs are not in `rebuild`. |
 | 57 P1 | IG sampled only 1985 | OBSOLETO | none | No XAI code. |
 | 57 P2-1 | Three NS box definitions | RONDA B | `hobday.py:18-19`, `masking.py:17-18` | Listed for Round B in the plan above. |
-| 57 P2-2 | `compute_stats` contiguous-slice leak | ABIERTO | `dataset.py:173-187` | Documented in code and above; not in the Round B list of the plan. Changes numbers if fixed. |
+| 57 P2-2 | `compute_stats` contiguous-slice leak | RESUELTO | `dataset.py:155-212` | Fixed in `e13001d`: input stats from train-window days only. |
 | 57 P2-3 | Clim 0.1° vs inputs 0.5° | ABIERTO (Ronda A) | `hobday.py:25-34` | The current threshold is a box mean of 0.1° per-pixel p90s; settled by the threshold decision in the 14 Oct section. The #40 delta still comes from the 0.1° clim. |
 | 58 | Relaunch into a dirty `output_dir` | RESUELTO | `train_partition.py:42-53`, `checkpoints.py:66-73` | Raises on existing checkpoints and on `-vN.ckpt` files. |
 | 59 | GradCAM on `(batch, 2)` output | OBSOLETO | none | No XAI code. |
@@ -208,12 +214,13 @@ code; reason given).
 | 62 | Spatial val-year shuffle | OBSOLETO | none | Spatial pipeline not in `rebuild`. |
 | 63 | Spatial `compute_stats` masking | OBSOLETO | none | Spatial pipeline not in `rebuild`. |
 | 64 | Spatial onset uses `tgt>0` | OBSOLETO | none | Spatial pipeline not in `rebuild`. |
-| 65 | No purge at Dec 31/Jan 1 | FIXING BEFORE ROUND A | `datamodule.py:79-99`, `:203-205` | `_purge` implemented, not resolved until the fold-0 test run. See #65 above. |
+| 65 | No purge at Dec 31/Jan 1 | RESUELTO | `datamodule.py:79-99`, `:203-207` | Fixed in `bd94997` (`_purge`); fold-0 test run 28205723. See #65 above. |
 | 66 | `window_size: 60` unjustified | RONDA B | yamls | See #66 above. |
 
 Stale text found in this file while triaging was corrected in a follow-up commit.
 
-Counts (69 rows): RESUELTO 30, OBSOLETO 28, ABIERTO 4, RONDA B 3, DUDA 4.
+Counts (69 rows): RESUELTO 32, OBSOLETO 28, ABIERTO 3, RONDA B 2, DUDA 4
+(updated 21 Oct 2026: #57 P2-2 and #65 fixed).
 
 ## Revisión línea a línea (Cris), 14 oct 2026
 
@@ -258,7 +265,8 @@ window +-5 days by index, linear `nanpercentile` p90, periodic 31-day smoothing,
 reference 1985-2014, first >=5 days then join gaps <=2, doy for a 365-day
 calendar without Feb 29. This is a DELIBERATE change of definition: on the
 training target (with the #40 delta), MHW days 1047 -> 1822 and events
-55 -> 80, 1985-2024. The narrative says 52 events (current code on the target
+55 -> 80, 1985-2024 (1813 days and 78 events after the leap-year delta fix,
+`3161023`). The narrative says 52 events (current code on the target
 without the delta): update it.
 
 ### Detection decides the split
@@ -270,17 +278,22 @@ Split: DECIDED (14 Oct 2026). Freezing the current years was not justified on
 its own (they came from the faulty detection), even though they are balanced
 under the corrected definition (2.0 pp). Adopted instead: serpentine (zigzag)
 assignment of the years ranked by Oliver MHW days, ties by increasing year
-(`datamodule._rank_years`, `_serpentine_buckets`). Test MHW days per fold
-404, 361, 352, 357, 348 (13.8, 12.4, 12.1, 12.2, 11.9 %, max-min 1.9 pp); val is
-the same list shifted by one fold (1.9 pp); train max-min 0.7 pp. 13 of the 40
-years have 0 MHW days, so their order comes from the tie-break alone.
+(`datamodule._rank_years`, `_serpentine_buckets`). Updated 21 Oct 2026 after
+the leap-year delta fix (`3161023`), which changed 2004 (23 -> 18 MHW days) and
+2024 (107 -> 102) and swapped 1990, 2004 <-> 2005, 2024 between buckets 2 and
+3 (folds 0 and 4 unchanged; fold 1 val, folds 2 and 3 test and val changed).
+Test MHW days per fold 404, 361, 349, 350, 349 (13.8, 12.4, 12.0, 12.0, 12.0 %,
+max-min 1.9 pp; events 17, 17, 15, 17, 18); val is the same list shifted by
+one fold (1.9 pp); train max-min 0.8 pp. 13 of the 40 years have 0 MHW days,
+so their order comes from the tie-break alone. Before the fix: 404, 361, 352,
+357, 348.
 
 | Fold | Test years | Val years |
 |---|---|---|
 | 0 | 1987, 1988, 1989, 1997, 2013, 2014, 2019, 2022 | 1986, 1991, 2002, 2009, 2011, 2012, 2016, 2023 |
-| 1 | 1986, 1991, 2002, 2009, 2011, 2012, 2016, 2023 | 1985, 1990, 1993, 2004, 2007, 2010, 2015, 2018 |
-| 2 | 1985, 1990, 1993, 2004, 2007, 2010, 2015, 2018 | 1994, 2000, 2001, 2005, 2006, 2008, 2017, 2024 |
-| 3 | 1994, 2000, 2001, 2005, 2006, 2008, 2017, 2024 | 1992, 1995, 1996, 1998, 1999, 2003, 2020, 2021 |
+| 1 | 1986, 1991, 2002, 2009, 2011, 2012, 2016, 2023 | 1985, 1993, 2005, 2007, 2010, 2015, 2018, 2024 |
+| 2 | 1985, 1993, 2005, 2007, 2010, 2015, 2018, 2024 | 1990, 1994, 2000, 2001, 2004, 2006, 2008, 2017 |
+| 3 | 1990, 1994, 2000, 2001, 2004, 2006, 2008, 2017 | 1992, 1995, 1996, 1998, 1999, 2003, 2020, 2021 |
 | 4 | 1992, 1995, 1996, 1998, 1999, 2003, 2020, 2021 | 1987, 1988, 1989, 1997, 2013, 2014, 2019, 2022 |
 
 Consequences:
@@ -308,12 +321,13 @@ Consequences:
 - To fix in `docs/history/narrative.md`: line 1587 calls a pooled r (0.850)
   "5-fold average".
 - `docs/history/narrative.md` must update the 52 events: with the Oliver
-  detection there are 80 events (1822 MHW days) on the training target (with
-  the #40 delta), 75 events (1823 days) on the target without the delta.
-- `load_ns_mean_clim_smooth_delta` is unchanged: the leap-year doy shift of
-  the delta (finding (a) below) stays open. It keeps its default arguments
-  (`smooth_days=31`, `clim_file=CLIM_FILE`) TEMPORARILY, against the
-  no-defaults rule, until the leap-day of the delta is fixed.
+  detection there are 78 events (1813 MHW days) on the training target (with
+  the #40 delta, after the leap-year fix `3161023`), 75 events (1823 days) on the
+  target without the delta.
+- `load_ns_mean_clim_smooth_delta` is unchanged. It keeps its default
+  arguments (`smooth_days=31`, `clim_file=CLIM_FILE`) TEMPORARILY, against the
+  no-defaults rule. The leap-day of the delta is now fixed (`3161023`), so the
+  defaults can go; removing them is a code change pending the owner's OK.
 
 Balance, MHW days in the 8 test years of each fold (calendar days; an event is
 counted in every split where it has at least one day). Computed with a temporary
@@ -334,11 +348,13 @@ fold 4), the known round-robin bias.
 
 ### Other open findings
 - (a) Leap-year doy shift: the calendar has no Feb 29 (14,600 days) but
-  `dayofyear` goes up to 366, so in leap years every day from Mar 1 is indexed
-  one doy ahead, and the `>= 365 -> 365` clamp merges Dec 30 and Dec 31. Affects
-  the #40 target delta (`dataset.py:131-135`) and the current threshold
-  (`datamodule.py:26-30`). How CDO indexed `sst_climatology_doy.nc` is not
-  verified.
+  `dayofyear` goes up to 366, so in leap years every day from Mar 1 was indexed
+  one doy ahead, and the `>= 365 -> 365` clamp merged Dec 30 and Dec 31.
+  FIXED (21 Oct 2026, `3161023`): `LazyDataset.doys` now comes from `noleap_doy`
+  and the delta is indexed with it. Effect on the training target: 3050 of
+  14600 days change (all in leap years from Mar 1), max 0.0173 °C; MHW 1822
+  days / 80 events -> 1813 / 78. The old threshold (`load_ns_p90`) no longer
+  exists. How CDO indexed `sst_climatology_doy.nc` is still not verified.
 - (b) The target box (51-62.5 N, 5.2 W-13.2 E at 0.1°) differs from the
   masking/hobday box (50-63 N, 5 W-13 E) (#57 P2-1).
 - (c) The absolute box-mean SST is not stored in any file; only the anomaly
@@ -370,20 +386,25 @@ directory `/work/gg1426/g260161/icon-oes-mm-coast_relaunch2/experiments/hamocc_e
 DECISION: MHW days and events are detected on the box-mean SST ANOMALY (the
 training target with the #40 delta), definition A. The pipeline code does not
 change. Hobday et al. (2016) detect on absolute SST (definition B); the two are
-not equivalent:
-- A gives 80 events (1822 days), B gives 64 events (1617 days), 1985-2024;
-  61 of the 80 A events overlap a B event, 62 of the 64 B events overlap an A
+not equivalent (numbers updated 21 Oct 2026 after the leap-year delta fix,
+`3161023`, which `sandbox/abs_vs_anom.py` now also applies):
+- A gives 78 events (1813 days), B gives 64 events (1623 days), 1985-2024;
+  61 of the 78 A events overlap a B event, 62 of the 64 B events overlap an A
   event. Cause: on absolute SST the +-5-day window pools days with different
   seasonal means (the climatology changes up to 0.083 °C/day), which widens the
   distribution. On the anomaly scale the B threshold is higher than the A
-  threshold in winter/spring (+0.06 to +0.11 °C, Dec-May) and lower in Aug-Sep
-  (-0.07, -0.04 °C); max 0.150 °C.
-- `hobday.py` (threshold + detect) matches `marineHeatWaves.detect`
-  (github.com/ecjoliver/marineHeatWaves, commit d7292bf) day by day on the
-  absolute series: 1617 days, 64 events, 0 differing days. Thresholds differ by
-  at most 0.0037 °C within +-15 days of Feb 29 (Oliver smooths a 366-day curve
-  with an interpolated Feb 29; we use 365 days) and by 1e-14 elsewhere.
-- Against NOAA OISST v2.1 on the same box (below), daily F1 is 0.71 for A
+  threshold in winter/spring (+0.04 to +0.11 °C, Dec-May) and lower in Aug-Sep
+  (-0.07, -0.05 °C); max 0.137 °C.
+- `hobday.py` matches `marineHeatWaves.detect`
+  (github.com/ecjoliver/marineHeatWaves, commit d7292bf) on 14,599 of 14,600
+  days of the absolute series (64 events in both; 1623 vs 1624 MHW days). The
+  one differing day (1998-03-05) comes from calendar handling: Oliver smooths
+  a 366-day threshold with an interpolated Feb 29, we use a 365-day year, so
+  thresholds differ by at most 0.0037 °C within +-15 days of Feb 29 (1e-14
+  elsewhere); the detection logic is identical. On 1998-03-05 the SST
+  (6.7587 °C) is 0.0004 °C above Oliver's threshold and 0.0026 °C below ours.
+  Before the leap-year fix the two matched on all days.
+- Against NOAA OISST v2.1 on the same box (below), daily F1 is 0.72 for A
   (model A vs OISST A) and 0.70 for B (model B vs OISST B). A is chosen: it is
   marginally closer to the observations and it is the scale of the training
   target. The paper must state that detection is on anomalies, not absolute SST.
@@ -397,14 +418,14 @@ all 7 appear in both A and B, several fragmented. Overlap = days of our event
 inside the documented window.
 | Documented event | A (anomaly) | B (absolute SST) |
 |---|---|---|
-| Jan-May 2007 (S North Sea + Channel, weak) | 24 Nov 2006-9 Feb (78 d) + 16 Feb-14 May (88 d); overlap 40 + 88 d | 25 Nov 2006-8 Feb (76 d) + 16 Feb-11 May (85 d); 39 + 85 d |
-| Jul 2009 (N North Sea, ~3 weeks) | 30 Jun-10 Jul (11 d); 10 d | 1-9 Jul (9 d); 9 d |
-| 31 Mar-9 May 2014 (S North Sea, ~40 d) | 3 pieces: 29 Mar-14 Apr, 20 Apr-2 May, 8-12 May; 15 + 13 + 2 d | 2 pieces: 1-13 Apr, 23-30 Apr; 13 + 8 d |
-| Jun-Aug 2018 | 31 May-12 Jun (13 d) + 17 Jul-16 Aug (31 d); 12 + 31 d | 6-11 Jun (6 d) + 19 Jul-17 Aug (30 d); 6 + 30 d |
+| Jan-May 2007 (S North Sea + Channel, weak) | 24 Nov 2006-9 Feb (78 d) + 16 Feb-14 May (88 d); overlap 40 + 88 d | 25 Nov 2006-8 Feb (76 d) + 16 Feb-13 May (87 d); 39 + 87 d |
+| Jul 2009 (N North Sea, ~3 weeks) | 30 Jun-10 Jul (11 d); 10 d | 1-10 Jul (10 d); 10 d |
+| 31 Mar-9 May 2014 (S North Sea, ~40 d) | 3 pieces: 29 Mar-14 Apr, 20 Apr-2 May, 8-12 May; 15 + 13 + 2 d | 2 pieces: 31 Mar-13 Apr, 22 Apr-1 May; 14 + 10 d |
+| Jun-Aug 2018 | 31 May-12 Jun (13 d) + 17 Jul-16 Aug (31 d); 12 + 31 d | 1-12 Jun (12 d) + 19 Jul-17 Aug (30 d); 12 + 30 d |
 | Aug-Oct 2022 (peak Sep) | 1-15 Sep (15 d) + 24 Oct-14 Dec (52 d); 15 + 8 d | 25 Aug-16 Sep (23 d) + 24 Oct-12 Dec (50 d); 23 + 8 d |
 | 13 Jun-4 Jul 2023 (NW North Sea) | 17 Jun-19 Jul (33 d); 18 d | same as A |
 | Sep 2023 | 5 Sep-19 Oct (45 d); 26 d | same as A |
-Max intensity of the matched events 0.95-1.80 °C. Several documented events
+Max intensity of the matched events 0.95-1.79 °C. Several documented events
 are regional (southern, northern or north-western North Sea) while our series
 is the mean of the whole box, so they show up shorter or split into pieces
 (2014 most clearly). The documented dates were taken as given, not re-checked
@@ -421,13 +442,15 @@ Same detection (`hobday.py`, same parameters), OISST A = anomaly vs its own
 1985-2014 +-5-day climatology, 31-day smoothed.
 - Daily r of anomalies, model vs OISST: 0.938. Absolute SST: r 0.991 (inflated
   by the shared seasonal cycle), model bias -0.27 °C.
-- MHW days: model A 1822, OISST A 2303 (OISST B 2081). The model detects fewer
+- MHW days: model A 1813, OISST A 2303 (OISST B 2081). The model detects fewer
   MHW days than the satellite.
-- Events (overlap >= 1 day), A vs A: 71/80 model events paired, 73/108 OISST
-  events paired. B vs B: 59/64 and 65/106.
-- Day level, model A vs OISST A (POD / FAR / F1): all 0.64 / 0.19 / 0.71;
-  DEF 0.62 / 0.17 / 0.71; MAM 0.55 / 0.31 / 0.61; JJA 0.65 / 0.26 / 0.69;
+- Events (overlap >= 1 day), A vs A: 71/78 model events paired, 73/108 OISST
+  events paired. B vs B: 60/64 and 64/106.
+- Day level, model A vs OISST A (POD / FAR / F1): all 0.64 / 0.19 / 0.72;
+  DEF 0.62 / 0.17 / 0.71; MAM 0.55 / 0.30 / 0.61; JJA 0.65 / 0.25 / 0.70;
   SON 0.73 / 0.05 / 0.83. Best SON, worst MAM. B vs B: all 0.62 / 0.20 / 0.70.
+- Numbers updated 21 Oct 2026 after the leap-year delta fix (`3161023`); the
+  model bias rounds to -0.27 °C (-0.266) and r is unchanged.
 Scripts: `sandbox/oisst_fill_ncei.py`, `sandbox/oisst_compare.py`.
 
 ## W&B: wandb 0.25.1 silently fails to sync (19 Oct 2026)

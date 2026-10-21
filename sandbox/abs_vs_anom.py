@@ -17,15 +17,14 @@ from src.utils.paths import CLIM_FILE, DATA_FILE
 ds = xr.open_dataset(DATA_FILE)
 time = ds.time
 years = time.dt.year.values
-doy_cl = time.dt.dayofyear.values.copy(); doy_cl[doy_cl >= 365] = 365  # as dataset.py
 doys = noleap_doy(time.dt.month.values, time.dt.day.values)
 raw = ds["target"].values.astype(np.float32)
-anom = raw + load_ns_mean_clim_smooth_delta()[doy_cl - 1].astype(np.float32)  # as dataset.py
+anom = raw + load_ns_mean_clim_smooth_delta()[doys - 1].astype(np.float32)  # as dataset.py (noleap doy)
 
 clim = xr.open_dataset(CLIM_FILE)
 c_box = clim.mean_clim.sel(lat=slice(51.0, 62.5), lon=slice(-5.2, 13.2)).mean(["lat", "lon"], skipna=True).values
 c_s = uniform_filter1d(c_box.astype(np.float64), size=SMOOTH_WIDTH, mode="wrap")
-sst = anom.astype(np.float64) + c_s[doy_cl - 1]
+sst = anom.astype(np.float64) + c_s[doys - 1]
 
 
 def run(x):
@@ -47,7 +46,7 @@ print("only abs    :", list(d[only_s]))
 ov_a = sum(1 for k in range(1, na + 1) if m_s[la == k].any())
 ov_s = sum(1 for k in range(1, ns + 1) if m_a[ls == k].any())
 print(f"anomaly events overlapping an abs event: {ov_a}/{na}; abs events overlapping an anomaly event: {ov_s}/{ns}")
-diff_day = (thr_s[doys - 1] - c_s[doy_cl - 1]) - thr_a[doys - 1]
+diff_day = (thr_s[doys - 1] - c_s[doys - 1]) - thr_a[doys - 1]
 i = np.abs(diff_day).argmax()
 print(f"threshold diff on anomaly scale, per day: max|.| {abs(diff_day[i]):.4f} degC on {d[i]}, RMS {np.sqrt((diff_day**2).mean()):.4f}")
 leap = years % 4 == 0
