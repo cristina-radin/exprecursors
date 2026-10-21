@@ -4,6 +4,7 @@ tests/synthetic.py:
   * per-variable land mask (known_issues.md #2)
   * land_fill_mode="nearest"
   * compute_stats uses ocean pixels only, in both land_fill modes (#55)
+  * compute_stats input stats use train-window days only (#57 P2-2)
   * hobday_smooth_target (#40)
 """
 
@@ -117,6 +118,28 @@ def test_compute_stats_identical_across_land_fill_modes():
     near.compute_stats(TRAIN_IDX)
     assert torch.allclose(zero.input_means, near.input_means, atol=1e-6)
     assert torch.allclose(zero.input_stds, near.input_stds, atol=1e-6)
+
+
+# ── #57 P2-2: input stats from train-window days only ─────────────────────
+
+
+def test_compute_stats_ignores_days_outside_train_windows():
+    # Two train blocks with a gap that plays the role of val/test days:
+    # making those days extreme must not change the input stats.
+    ds = _dataset()
+    train = list(range(0, 400)) + list(range(1500, 1900))
+    ds.compute_stats(train)
+    means, stds = ds.input_means.clone(), ds.input_stds.clone()
+
+    used = np.zeros(ds.data[syn.VARIABLES[0]].shape[0], dtype=bool)
+    for i in train:
+        used[i : i + ds.window_size] = True
+    assert (~used[:1500]).any()  # the gap really has unused days
+    for var in syn.VARIABLES:
+        ds.data[var][torch.from_numpy(~used)] = 1e6
+    ds.compute_stats(train)
+    assert torch.equal(ds.input_means, means)
+    assert torch.equal(ds.input_stds, stds)
 
 
 # ── #40: hobday_smooth_target ───────────────────────────────────────────────

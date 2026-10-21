@@ -21,10 +21,8 @@ class LazyDataset(Dataset):
     Dataset for daily merged NetCDF (merged_daily.nc).
 
     Normalisation stats (input and target) are not computed here. Call
-    compute_stats(train_indices) from the DataModule after splitting. Target
-    stats use only the train indices; input stats use the contiguous slice
-    from the first to the last train sample, which can include val/test
-    years that fall between train years (see compute_stats docstring).
+    compute_stats(train_indices) from the DataModule after splitting. Both
+    use train samples only (see compute_stats).
     """
 
     def __init__(
@@ -159,29 +157,29 @@ class LazyDataset(Dataset):
         Compute input mean/std (ocean pixels only, for ocean variables) and
         target mean/std.
 
-        Input stats are computed over the contiguous slice from the first
-        to the last train sample's window, which can include val/test years
-        that fall between train years (docs/open_issues.md, #57 P2-2).
-        Target stats use only the exact train sample indices.
+        Input stats are computed over the days covered by at least one train
+        input window (days i .. i + window_size - 1 for every train index i),
+        so val/test days never enter them. Target stats use only the train
+        target days (i + window_size - 1 + lead_time).
 
         Args:
             train_indices: list/array of sample indices in the train set.
         """
         train_indices = list(train_indices)
 
-        t_start = min(train_indices)
-        t_end = max(train_indices) + self.window_size
+        used = np.zeros(len(self.ds.time), dtype=bool)
+        for i in train_indices:
+            used[i : i + self.window_size] = True
+        used = torch.from_numpy(used)
 
         print(
-            f"\nComputing input normalisation stats over the contiguous slice "
-            f"[{t_start}:{t_end}] ({t_end - t_start} days, years "
-            f"{int(self.years[t_start])}-{int(self.years[t_end - 1])}) -- this "
-            f"may include val/test years that fall between train years."
+            f"\nComputing input normalisation stats over the {int(used.sum())} "
+            f"days covered by train input windows"
         )
         means, stds = [], []
 
         for var in self.variables:
-            data = self.data[var][t_start:t_end].clone()  # (T, lat, lon)
+            data = self.data[var][used]  # (T_used, lat, lon), a copy
 
             if var in self.ocean_variables:
                 # Exclude land pixels from the mean/std regardless of
