@@ -13,6 +13,8 @@ import torch
 import xarray as xr
 from torch.utils.data import Dataset
 
+from src.utils.hobday import load_ns_mean_clim_smooth_delta, noleap_doy
+
 
 class LazyDataset(Dataset):
     """
@@ -42,7 +44,10 @@ class LazyDataset(Dataset):
         self.ds = xr.open_mfdataset(file_name, parallel=True, engine="netcdf4")
 
         self.years = self.ds.time.dt.year.values
-        self.doys = self.ds.time.dt.dayofyear.values  # 1-366
+        # 365-day calendar without Feb 29: Mar 1 = 60, Dec 31 = 365.
+        self.doys = noleap_doy(
+            self.ds.time.dt.month.values, self.ds.time.dt.day.values
+        )
 
         # ptho_bot uses land_mask_tbottom, not land_mask: the two masks
         # disagree on which pixels are land.
@@ -123,16 +128,8 @@ class LazyDataset(Dataset):
         # 31-day smoothing to the target, before stats are computed from it.
         self.hobday_smooth_target = config["hobday_smooth_target"]
         if self.hobday_smooth_target:
-            # Imported here, not at module level: it needs MHW_CLIM_FILE,
-            # which configs that leave this flag off should not require.
-            from src.utils.hobday import load_ns_mean_clim_smooth_delta
-
             delta = load_ns_mean_clim_smooth_delta()  # (365,), physical units
-            doys_clamped = self.doys.copy()
-            doys_clamped[doys_clamped >= 365] = (
-                365  # leap day -> 365, same as elsewhere
-            )
-            delta_per_t = torch.tensor(delta[doys_clamped - 1], dtype=torch.float32)
+            delta_per_t = torch.tensor(delta[self.doys - 1], dtype=torch.float32)
             target_mean_before = float(self.target.mean())
             target_std_before = float(self.target.std())
             self.target = self.target + delta_per_t

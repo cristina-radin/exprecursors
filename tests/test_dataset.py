@@ -8,12 +8,14 @@ tests/synthetic.py:
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 import xarray as xr
 from scipy.ndimage import uniform_filter1d
 
 from src.data.dataset import LazyDataset
+from src.utils.hobday import noleap_doy
 from tests import synthetic as syn
 
 TRAIN_IDX = list(range(0, 1500))
@@ -136,7 +138,24 @@ def test_hobday_smooth_target_adds_unsmoothed_minus_smoothed_clim():
     delta = mean_clim - uniform_filter1d(mean_clim, size=31, mode="wrap")
     assert np.abs(delta).max() > 1e-3  # the synthetic seasonal cycle is not flat
 
-    doys = ds.doys.copy()
-    doys[doys >= 365] = 365  # leap day folded into 365
+    time = xr.open_dataset(syn.DATA_FILE).time
+    doys = noleap_doy(time.dt.month.values, time.dt.day.values)
     expected = raw + delta[doys - 1]
     assert np.allclose(ds.target.numpy(), expected, atol=1e-5)
+
+
+def test_hobday_smooth_target_leap_year_uses_365_day_doy():
+    # 1988 is a leap year with no Feb 29 in the data: Mar 1 must get the
+    # delta of doy 60 and Dec 31 the delta of doy 365 (not 61 / 366 -> 365).
+    ds = _dataset(hobday_smooth_target=True)
+    raw = xr.open_dataset(syn.DATA_FILE)["target"].values
+    time = pd.to_datetime(xr.open_dataset(syn.DATA_FILE).time.values)
+    delta = ds.target.numpy() - raw
+    clim = xr.open_dataset(syn.CLIM_FILE)
+    ns = clim.mean_clim.sel(lat=slice(50.0, 63.0), lon=slice(-5.0, 13.0))
+    mean_clim = ns.mean(dim=["lat", "lon"]).values
+    expected = mean_clim - uniform_filter1d(mean_clim, size=31, mode="wrap")
+    for date, doy in (("1988-03-01", 60), ("1988-12-31", 365)):
+        i = int(np.flatnonzero(time == pd.Timestamp(date))[0])
+        assert ds.doys[i] == doy
+        assert np.isclose(delta[i], expected[doy - 1], atol=1e-5)
