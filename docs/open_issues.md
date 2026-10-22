@@ -1,7 +1,7 @@
 # Open issues that affect the code in this branch
 
-Numbers are the original `docs/history/known_issues.md` numbers. Nothing here is
-fixed yet; fixing any of them changes results and needs its own step.
+Numbers are the original `docs/history/known_issues.md` numbers. Fixed items
+are marked FIXED / RESUELTO with their commit.
 
 ## #65 — no purge at Dec 31 / Jan 1 boundaries (`src/data/datamodule.py`)
 `stratified_kfold` assigns whole calendar years to train/val/test. A sample
@@ -17,12 +17,16 @@ per fold; with embargo 30 (gap 96, not implemented) train -13.3 to -20.8 %,
 val -6.6 to -16.8 %.
 
 ## #57 P2-1 — three definitions of the North Sea box
-- `src/utils/hobday.py`: lat 50-63, lon -5-13 on the 0.1° climatology (p90, mean_clim).
+- `src/utils/hobday.py`: lat 50-63, lon -5-13 on the 0.1° climatology
+  (`mean_clim`, for the #40 delta only; the MHW threshold no longer uses this
+  box, see #57 P2-3).
 - `src/data/masking.py`: index slices lat[100:127], lon[150:187] on the 0.5° grid
   (same box as hobday.py).
 - the `target` in `merged_daily.nc`: lat 51.0-62.5, lon -5.2-13.2 at 0.1°.
 The hobday.py box does not match the target box (rms 0.047 °C vs 0.026 °C for
-the box that does). Effect ~0.02 °C on the p90 threshold and on the #40 delta.
+the box that does). Remaining effect (moved here from #57 P2-3): the #40 delta
+still comes from the 0.1° climatology averaged over the hobday.py box; computed
+over the target box instead it changes by RMS 0.0010 °C, max 0.0029 °C.
 
 ## #57 P2-2 — leak in `compute_stats` (`src/data/dataset.py`)
 Input mean/std are computed on the contiguous slice `[min(train), max(train)+60]`.
@@ -38,10 +42,18 @@ change ptho_bot -0.75 %, u10 -1.11 %, v10 -0.73 %, msl -1.38 %, ssr +1.99 %;
 mean shifts <= 0.0014 std.
 
 ## #54 — events that span Dec 31 / Jan 1
-Per-year Hobday processing splits real events at the year boundary (3 of 52
-events, 2006-07, 2015-16, 2022-23). The year ranking in `datamodule.py` runs
-`apply_hobday` on the full contiguous series, so it is not affected; the issue
-applies to any evaluation that reprocesses the series year by year.
+Per-year Hobday processing splits real events at the year boundary. With the
+current detection (Oliver `677c888`, training target after `3161023`) 7 of 78
+events span Dec 31 / Jan 1 (2006-07, 2015-16, 2016-17, 2018-19, 2019-20,
+2020-21, 2022-23). The year ranking in `datamodule.py` runs `threshold` +
+`detect` once on the full contiguous series and only then counts days per
+year, so it is not affected. No code in `src/`, `scripts/` or `tools/` runs
+the detection year by year or computes event metrics (POD/FAR/F1) yet.
+Design requirement for the Round A event-metrics code: event metrics
+(POD/FAR/F1, detected / onset anticipated) must run `detect()` on the pooled
+40-year predicted series (each year predicted by the fold where it is test),
+not per fold or per year, so the 7 of 78 events that cross Dec 31 / Jan 1 are
+not cut. Threshold: the one from the true target series.
 
 ## #40 — `mean_clim` is not 31-day smoothed
 Hobday et al. 2016 smooths both the climatological mean and the p90; the mean
@@ -153,9 +165,9 @@ code; reason given).
 | 4 | Do not compare GNLL vs MSE skill | RESUELTO | `CLAUDE.md` | Reporting rule, kept in CLAUDE.md ("Losses"). |
 | 5 | State mean-of-folds vs pooled r | RESUELTO | `CLAUDE.md` | Reporting rule, kept in CLAUDE.md ("Reporting skill"). |
 | 6 | \|IG\| vs signed IG | DUDA | none | Interpretation rule for XAI; no XAI code in `rebuild`. Decide whether it becomes a CLAUDE.md rule when XAI comes back. |
-| 7 | `p90_thresh` stored without 31-day smooth | RESUELTO | `hobday.py:34` | Smooth applied in `load_ns_p90`. The threshold itself is under review (see the 14 Oct section). |
+| 7 | `p90_thresh` stored without 31-day smooth | OBSOLETO | none | `load_ns_p90` and `p90_thresh` are no longer used (the threshold is computed on the series, `677c888`). |
 | 8 | No unbatched per-sample IG loops | OBSOLETO | none | No IG/inference scripts in `rebuild`. |
-| 9 | MHW needs >=5 days + gap <=2 | ABIERTO (Ronda A) | `hobday.py:64-102` | Implemented, but gaps are filled before the 5-day rule (reverse of Oliver). Drives the split. See the 14 Oct section. |
+| 9 | MHW needs >=5 days + gap <=2 | RESUELTO | `hobday.py:97-123` | Fixed in `677c888`: `detect` drops runs < 5 days first, then joins gaps <= 2 (Oliver). |
 | 10 | CCM unreliable on daily data | DUDA | none | Paper caveat, no CCM code in `rebuild`. |
 | 11 | No silent fallbacks | RESUELTO | `CLAUDE.md` | Rule in CLAUDE.md; no `except` in `src/`, `scripts/`, `tests/`, `tools/`. |
 | 12 | Old experiment names | OBSOLETO | none | `rebuild` configs are `gnll`, `gnll_quantile`, `mse`. |
@@ -169,7 +181,7 @@ code; reason given).
 | 20 | Dead XAI wrappers | OBSOLETO | none | `src/xai/` not in `rebuild`. |
 | 21 | Pre-June-2026 TbotAtm on absolute `ptho_bot` | OBSOLETO | none | Old results; `rebuild` retrains on `merged_daily.nc`. |
 | 22 | Silent routing to the `_OLD` file | OBSOLETO | none | `thermal_inertia_test.py` not in `rebuild`. |
-| 23 | NumPy RNG API in split code | OBSOLETO | `datamodule.py:111-123` | `stratified_kfold` uses no RNG (deterministic ranking). Rule kept in CLAUDE.md. |
+| 23 | NumPy RNG API in split code | OBSOLETO | `datamodule.py:65-77`, `:189` | `stratified_kfold` uses no RNG (deterministic ranking). Rule kept in CLAUDE.md. |
 | 24 | Stale spatial checkpoints | OBSOLETO | none | Spatial pipeline not in `rebuild`. |
 | 25 | `gaussian_nll` was a dead parameter | RESUELTO | `cnn_lstm.py:154`, `:287-299`, `:329-334` | Real 2-output head and `GaussianNLLLoss`. |
 | 26 | 8 px MaxPool grid artifact in IG | OBSOLETO | none | No IG code; the configs use `pooling: avg` (#27). |
@@ -186,7 +198,7 @@ code; reason given).
 | 37 | `quantile_head` vs `focal_weight` | OBSOLETO | none | Focal loss removed. |
 | 38 | Focal params not persisted | OBSOLETO | none | Focal loss removed. |
 | 39 | `p90_by_doy` not restored | OBSOLETO | none | Focal loss removed. |
-| 40 | `mean_clim` not 31-day smoothed | RESUELTO | `dataset.py:122-146`, yamls | `hobday_smooth_target: true` in all 3 yamls. Not regenerated at source. Leap-year doy shift affects this delta (see the 14 Oct section). |
+| 40 | `mean_clim` not 31-day smoothed | RESUELTO | `dataset.py:125-141`, yamls | `hobday_smooth_target: true` in all 3 yamls. Not regenerated at source. |
 | 41 | Basin-mean-then-threshold vs per-pixel MHW | DUDA | `hobday.py` | Paper-framing decision, not a code bug. The 14 Oct decision (Oliver on the box-mean series) keeps basin-mean-first, so it does not settle it. |
 | 42 | `kfold` `val_years` collision | RESUELTO | `datamodule.py:79-83`, `test_splits.py` | Only `stratified_kfold`; val rotates per fold, tested. |
 | 43 | SLURM mail never sent | RESUELTO | `levante.sbatch:12-19`, `CLAUDE.md` | `--account`/`--mail-user` on the command line. |
@@ -200,13 +212,13 @@ code; reason given).
 | 51 | Mean vs quantile IG maps identical | OBSOLETO | none | XAI result, no code in `rebuild`. |
 | 52 | `ptho_bot` coastal IG is a masking artifact | OBSOLETO | `dataset.py:66-95` | XAI part gone; `land_fill_mode: nearest` is in the yamls. Related Round B item: "nearest fill covers all land". |
 | 53 | Concatenated test years bridged by Hobday | OBSOLETO | none | No evaluation code; the split runs Hobday on the full contiguous series. Applies to any future evaluation. |
-| 54 | Per-year Hobday cuts Dec 31/Jan 1 events | ABIERTO | none yet | Applies only to evaluation that reprocesses year by year; none exists in `rebuild` yet. |
+| 54 | Per-year Hobday cuts Dec 31/Jan 1 events | ABIERTO | none yet | Design requirement for the Round A event-metrics code: `detect()` on the pooled 40-year predicted series, threshold from the true target. See #54 above. |
 | 55 | Land pixels in `ptho_bot` stats (nearest) | RESUELTO | `dataset.py:189-195` | Land excluded for ocean variables under both fill modes. |
 | 56 | def2 climatology, onset script, v1 configs | OBSOLETO | none | The three scripts/configs are not in `rebuild`. |
 | 57 P1 | IG sampled only 1985 | OBSOLETO | none | No XAI code. |
-| 57 P2-1 | Three NS box definitions | RONDA B | `hobday.py:18-19`, `masking.py:17-18` | Listed for Round B in the plan above. |
+| 57 P2-1 | Three NS box definitions | RONDA B | `hobday.py:30-31`, `masking.py:17-18` | Listed for Round B in the plan above. Includes the delta part moved from #57 P2-3. |
 | 57 P2-2 | `compute_stats` contiguous-slice leak | RESUELTO | `dataset.py:155-212` | Fixed in `e13001d`: input stats from train-window days only. |
-| 57 P2-3 | Clim 0.1° vs inputs 0.5° | ABIERTO (Ronda A) | `hobday.py:25-34` | The current threshold is a box mean of 0.1° per-pixel p90s; settled by the threshold decision in the 14 Oct section. The #40 delta still comes from the 0.1° clim. |
+| 57 P2-3 | Clim 0.1° vs inputs 0.5° | RESUELTO | `hobday.py:62-94` | For the threshold, fixed in `677c888` (computed on the box-mean series). The delta part moved to #57 P2-1. |
 | 58 | Relaunch into a dirty `output_dir` | RESUELTO | `train_partition.py:42-53`, `checkpoints.py:66-73` | Raises on existing checkpoints and on `-vN.ckpt` files. |
 | 59 | GradCAM on `(batch, 2)` output | OBSOLETO | none | No XAI code. |
 | 60 | Eval scripts bypass local/remote masking | RESUELTO | `cnn_lstm.py:174-189` | Masking now lives in `_encode`, shared by every forward path. |
@@ -219,8 +231,8 @@ code; reason given).
 
 Stale text found in this file while triaging was corrected in a follow-up commit.
 
-Counts (69 rows): RESUELTO 32, OBSOLETO 28, ABIERTO 3, RONDA B 2, DUDA 4
-(updated 21 Oct 2026: #57 P2-2 and #65 fixed).
+Counts (69 rows): RESUELTO 33, OBSOLETO 29, ABIERTO 1, RONDA B 2, DUDA 4
+(updated 22 Oct 2026: #57 P2-2, #65, #9 and #57 P2-3 fixed; #7 obsolete).
 
 ## Revisión línea a línea (Cris), 14 oct 2026
 
@@ -240,7 +252,10 @@ Counts (69 rows): RESUELTO 32, OBSOLETO 28, ABIERTO 3, RONDA B 2, DUDA 4
   `.env.example`; added 15 Oct 2026.
 - `checkpoints.py` (`0c5eeb4`, by blocks, docstrings only).
 
-### `hobday.py`: IN REVIEW
+### `hobday.py`: REVIEWED
+Findings 1-4 resolved in `677c888` (Oliver detection, docstrings); validated
+against `marineHeatWaves.detect` (see "MHW detection on anomalies"). Finding 5
+is #57 P2-3 / #57 P2-1.
 Findings:
 1. `load_ns_p90` averages the per-pixel p90 of the 0.1° climatology over the
    box and compares it with the box-mean anomaly. Mean of percentiles is not the
