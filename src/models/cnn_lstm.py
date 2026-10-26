@@ -113,7 +113,7 @@ class CNNLSTMModel(nn.Module):
         padding_mode: "zeros" or "reflect" — see CNNEncoder docstring
         mode:         "full" (no masking), "local_only" (zero everything
             outside the North Sea box) or "remote_only" (zero everything
-            inside it) — see src/data/masking.py for the exact box.
+            inside it).
     """
 
     def __init__(
@@ -165,10 +165,8 @@ class CNNLSTMModel(nn.Module):
             nn.Linear(64, out_dim),
         )
 
-        # Independent auxiliary head: predicts a conditional quantile of the
-        # target (tau is set by the caller's pinball loss). Shares the CNN
-        # and LSTM backbone with self.fc but has its own parameters, so a
-        # pinball-loss gradient here never reaches self.fc.
+        # Auxiliary quantile head (pinball loss). Own parameters, shared
+        # CNN + LSTM backbone.
         if quantile_head:
             self.quantile_head = nn.Sequential(
                 nn.Linear(context_dim, 64),
@@ -178,11 +176,9 @@ class CNNLSTMModel(nn.Module):
             )
 
     def _encode(self, x_spatial: torch.Tensor) -> torch.Tensor:
-        """Runs the CNN encoder frame-by-frame then the LSTM over the
-        resulting sequence, returning the last timestep's hidden state. The
-        only point every entry path (forward(), forward_with_quantile(),
-        CNNLightningModule._step()) shares, so self.mode's masking applies
-        identically regardless of which one is called.
+        """Runs the CNN encoder frame-by-frame. Then the LSTM runs over the
+        resulting sequence, returning the last timestep's hidden state. Works
+        for every mode.
 
         Args:
             x_spatial: (batch, window_size, n_vars, lat, lon)
@@ -198,7 +194,7 @@ class CNNLSTMModel(nn.Module):
 
         # Encode each frame with the CNN
         x_flat = x_spatial.view(batch * window, n_vars, lat, lon)
-        features = self.cnn_encoder(x_flat)  # (batch*window, cnn_features)
+        features = self.cnn_encoder(x_flat)
         features = features.view(batch, window, -1)  # (batch, window, cnn_features)
 
         lstm_out, _ = self.lstm(features)  # (batch, window, lstm_hidden)
@@ -216,18 +212,13 @@ class CNNLSTMModel(nn.Module):
 
     def forward_with_quantile(self, x_spatial: torch.Tensor):
         """Like forward(), but also returns the auxiliary quantile head's
-        output. Requires quantile_head=True at construction.
+        output. Requires quantile_head=True.
 
         Shares the exact backbone computation with forward() via _encode()
-        — the gaussian head's (mean, log_var) output and loss are unaffected
-        whether or not this method is ever called.
 
         Returns:
-            y_hat:  (batch, 2) or (batch, 1) — identical to forward()
-            q_pred: (batch, 1) — predicted conditional quantile (tau is a
-                training-loss concept, not stored on the model). Distinct
-                from Hobday's p90_thresh (climatological, fixed by DOY) —
-                do not conflate the two downstream.
+            y_hat:  (batch, 2) or (batch, 1): identical to forward()
+            q_pred: (batch, 1): predicted conditional quantile
         """
         if not self.quantile_head_enabled:
             raise RuntimeError(
@@ -322,8 +313,7 @@ class CNNLightningModule(pl.LightningModule):
     def _pinball_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Pinball (quantile) loss at self.quantile_tau. `pred` must be the
         dedicated quantile-head output (model.forward_with_quantile's q_pred)
-        — never the gaussian head's `mean`, so its gradient cannot reach
-        self.model.fc (mean/log_var)."""
+        (never the mean head's `mean`)."""
         tau = self.quantile_tau
         err = target - pred
         return torch.max(tau * err, (tau - 1) * err).mean()
@@ -332,9 +322,7 @@ class CNNLightningModule(pl.LightningModule):
         """
         y_hat: (batch, 2) [mean, log_var] if gaussian_nll else (batch, 1) [mean].
         Returns (loss, pred) where pred is always (batch, 1) — the mean, for
-        metrics/logging/plots (all downstream code expects a single value).
-        Unaffected by quantile_head — this is exactly the GNLL/MSE loss,
-        whether or not an auxiliary quantile head exists.
+        metrics/logging/plots
         """
         if self.gaussian_nll:
             mean = y_hat[:, 0:1]
