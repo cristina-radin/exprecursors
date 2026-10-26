@@ -16,6 +16,7 @@ from src.utils.checkpoints import best_ckpt, load_model_config, save_model_confi
 VARIANTS = [
     dict(gaussian_nll=True, quantile_head=True),
     dict(gaussian_nll=True, quantile_head=False),
+    dict(gaussian_nll=False, quantile_head=True),
     dict(gaussian_nll=False, quantile_head=False),
 ]
 

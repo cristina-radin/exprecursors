@@ -13,7 +13,7 @@ in_channels: 5
 mode: full
 pooling: avg
 padding_mode: reflect
-gaussian_nll: true
+loss: gnll
 quantile_head: true
 quantile_tau: 0.9
 quantile_weight: 0.3
@@ -23,7 +23,6 @@ n_folds: 5
 seed: 42
 run_name: gnll_quantile
 normalize: true
-loss_fn: GaussianNLLLoss
 num_workers: 4
 cnn_features: 256
 lstm_hidden: 512

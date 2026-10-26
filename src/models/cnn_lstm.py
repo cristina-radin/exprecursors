@@ -15,11 +15,13 @@ from typing import Any, Dict
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+from torchmetrics import MeanMetric
 from torchmetrics.regression import MeanAbsoluteError, PearsonCorrCoef
 
 from src.data.masking import mask_local, mask_remote
 
 MODES = ("full", "local_only", "remote_only")
+LOSSES = ("mse", "gnll")
 
 # =============================================================================
 # CNN Encoder — one spatial frame → feature vector
@@ -103,6 +105,10 @@ class CNNLSTMModel(nn.Module):
         lstm_hidden:  LSTM hidden size
         lstm_layers:  number of LSTM layers
         dropout:      dropout in LSTM
+        gaussian_nll: architecture flag, True = the head outputs
+            [mean, log_var] (loss "gnll"), False = [mean] only (loss
+            "mse"). train_partition.py derives it from the yaml `loss`;
+            kept under this name so saved model_config.json files load.
         pooling:      "max" or "avg" — see CNNEncoder docstring
         padding_mode: "zeros" or "reflect" — see CNNEncoder docstring
         mode:         "full" (no masking), "local_only" (zero everything
@@ -248,8 +254,7 @@ class CNNLightningModule(pl.LightningModule):
         weight_decay: float,
         target_mean: float,
         target_std: float,
-        loss_fn: str,
-        gaussian_nll: bool,
+        loss: str,
         quantile_head: bool,
         quantile_tau: float,
         quantile_weight: float,
@@ -265,7 +270,15 @@ class CNNLightningModule(pl.LightningModule):
         self.weight_decay = weight_decay
         self.target_mean = target_mean
         self.target_std = target_std
-        self.gaussian_nll = gaussian_nll
+        if loss not in LOSSES:
+            raise ValueError(f"loss must be one of {LOSSES}, got {loss!r}")
+        self.loss = loss
+        self.gaussian_nll = loss == "gnll"
+        if model.gaussian_nll != self.gaussian_nll:
+            raise ValueError(
+                f"loss={loss!r} needs a model built with "
+                f"gaussian_nll={self.gaussian_nll}, got {model.gaussian_nll}."
+            )
         self.quantile_head = quantile_head
         self.quantile_tau = quantile_tau
         self.quantile_weight = quantile_weight
@@ -274,32 +287,29 @@ class CNNLightningModule(pl.LightningModule):
         self.warmup_epochs = warmup_epochs
         self.cosine_t_max_epochs = cosine_t_max_epochs
 
-        if quantile_head and not gaussian_nll:
+        if quantile_head != model.quantile_head_enabled:
             raise ValueError(
-                "quantile_head=True requires gaussian_nll=True — the dual-head "
-                "design attaches the auxiliary quantile head alongside the GNLL "
-                "head, it does not replace it."
+                f"quantile_head={quantile_head} but the model was built with "
+                f"quantile_head={model.quantile_head_enabled}."
             )
         if quantile_head and not (0.0 < quantile_tau < 1.0):
             raise ValueError(
                 f"quantile_head=True requires quantile_tau in (0, 1), got {quantile_tau}"
             )
-        if gaussian_nll:
-            if loss_fn != "GaussianNLLLoss":
-                raise ValueError(
-                    f"gaussian_nll=True requires loss_fn='GaussianNLLLoss', got "
-                    f"{loss_fn!r}."
-                )
+        if self.gaussian_nll:
             self.nll_loss = nn.GaussianNLLLoss()
-        elif loss_fn != "MSELoss":
-            raise ValueError(
-                f"gaussian_nll=False requires loss_fn='MSELoss', got {loss_fn!r}."
-            )
         else:
             self.loss_fn = nn.MSELoss()
 
+        # Mean-head skill (normalised units) and, with the quantile head, the
+        # fraction of samples above q_pred (about 1 - tau if calibrated).
+        self.val_mae = MeanAbsoluteError()
+        self.val_corr = PearsonCorrCoef()
         self.test_mae = MeanAbsoluteError()
         self.test_corr = PearsonCorrCoef()
+        if quantile_head:
+            self.val_q_coverage = MeanMetric()
+            self.test_q_coverage = MeanMetric()
 
         self.test_means = []
         self.test_log_vars = []
@@ -341,20 +351,26 @@ class CNNLightningModule(pl.LightningModule):
             return self.model.forward_with_quantile(x_spatial.float())
         return self(x_spatial), None
 
-    def _step(self, batch, split: str):
-        """Runs one forward pass and computes the loss: NLL(mean, log_var),
-        plus quantile_weight * pinball(q_pred, y, tau) if quantile_head is
-        enabled. Returns (loss, pred, y)."""
+    def _step_with_quantile(self, batch, split: str):
+        """Runs one forward pass and computes the loss: the main loss (GNLL
+        or MSE), plus quantile_weight * pinball(q_pred, y, tau) if
+        quantile_head is enabled. Returns (loss, pred, y, q_pred); q_pred is
+        None without the quantile head."""
         x_spatial, y = batch
         y_hat, q_pred = self._forward_dual(x_spatial)
         loss, pred = self._loss_and_pred(y_hat, y)
 
         if self.quantile_head:
             pinball = self._pinball_loss(q_pred, y)
-            self.log(f"{split}_nll_loss", loss, on_step=False, on_epoch=True)
+            self.log(f"{split}_main_loss", loss, on_step=False, on_epoch=True)
             self.log(f"{split}_pinball_loss", pinball, on_step=False, on_epoch=True)
             loss = loss + self.quantile_weight * pinball
 
+        return loss, pred, y, q_pred
+
+    def _step(self, batch, split: str):
+        """_step_with_quantile without q_pred. Returns (loss, pred, y)."""
+        loss, pred, y, _ = self._step_with_quantile(batch, split)
         return loss, pred, y
 
     def training_step(self, batch, batch_idx):
@@ -363,17 +379,29 @@ class CNNLightningModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, _, _ = self._step(batch, "val")
+        loss, pred, y, q_pred = self._step_with_quantile(batch, "val")
         self.log("val_loss", loss, on_epoch=True, prog_bar=True)
+
+        self.val_mae.update(pred.squeeze(-1), y.squeeze(-1))
+        self.val_corr.update(pred.squeeze(-1), y.squeeze(-1))
+        self.log("val_mae", self.val_mae, on_step=False, on_epoch=True)
+        self.log("val_corr", self.val_corr, on_step=False, on_epoch=True)
+        if self.quantile_head:
+            self.val_q_coverage.update((y > q_pred).float())
+            self.log("val_q_coverage", self.val_q_coverage, on_step=False, on_epoch=True)
         return loss
 
     def on_test_epoch_start(self):
         # Reset so repeated trainer.test() calls in the same process don't
-        # accumulate predictions across runs.
+        # accumulate predictions or metric state across runs.
         self.test_means = []
         self.test_log_vars = []
         self.test_q_preds = []
         self.test_ys = []
+        self.test_mae.reset()
+        self.test_corr.reset()
+        if self.quantile_head:
+            self.test_q_coverage.reset()
 
     def test_step(self, batch, batch_idx):
         loss, pred, y = self._step(batch, "test")
@@ -384,8 +412,8 @@ class CNNLightningModule(pl.LightningModule):
         # pred (from _step) is already the mean; call _forward_dual again
         # (same deterministic eval-mode forward) to also get log_var/q_pred,
         # which _step's (loss, pred, y) contract doesn't carry -- callers
-        # (training_step/validation_step, tools/equivalence.py) rely on
-        # that exact 3-tuple, so it stays unchanged.
+        # (training_step, tools/equivalence.py) rely on that exact 3-tuple,
+        # so it stays unchanged.
         x_spatial, _ = batch
         y_hat, q_pred = self._forward_dual(x_spatial)
         self.test_means.append(y_hat[:, 0:1].detach().cpu())
@@ -393,6 +421,7 @@ class CNNLightningModule(pl.LightningModule):
             self.test_log_vars.append(y_hat[:, 1:2].detach().cpu())
         if self.quantile_head:
             self.test_q_preds.append(q_pred.detach().cpu())
+            self.test_q_coverage.update((y > q_pred).float())
         self.test_ys.append(y.detach().cpu())
 
         self.log("test_loss", loss, on_epoch=True)
@@ -404,6 +433,8 @@ class CNNLightningModule(pl.LightningModule):
 
         self.log("test_mae", mae)
         self.log("test_corr", corr)
+        if self.quantile_head:
+            self.log("test_q_coverage", self.test_q_coverage.compute())
 
         mae_physical = mae * self.target_std  # back to °C
         print(

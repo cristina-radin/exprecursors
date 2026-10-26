@@ -104,7 +104,7 @@ def model_kwargs(cfg):
         lstm_hidden=cfg["lstm_hidden"],
         lstm_layers=cfg["lstm_layers"],
         dropout=cfg["dropout"],
-        gaussian_nll=cfg["gaussian_nll"],
+        gaussian_nll=cfg["loss"] == "gnll",
         pooling=cfg["pooling"],
         padding_mode=cfg["padding_mode"],
         quantile_head=cfg["quantile_head"],
@@ -148,6 +148,12 @@ def load_reference_checkpoint(cfg):
             problems.append(f"{key}: model_config.json={saved[key]!r} built={built[key]!r}")
 
     resolved = yaml.safe_load(open(ckpt_dir / "resolved_config.yaml"))
+    # gaussian_nll + loss_fn were merged into one `loss` key (mse | gnll);
+    # a checkpoint trained before that has the old pair. Any other
+    # combination raises (KeyError).
+    if "loss" not in resolved and "gaussian_nll" in resolved:
+        legacy = {(True, "GaussianNLLLoss"): "gnll", (False, "MSELoss"): "mse"}
+        resolved["loss"] = legacy[(resolved.pop("gaussian_nll"), resolved.pop("loss_fn"))]
     for key in sorted((set(resolved) | set(cfg)) - LOCATION_KEYS):
         if key not in cfg:
             if key in REMOVED_INERT_KEYS and resolved.get(key) == REMOVED_INERT_KEYS[key]:
@@ -176,8 +182,7 @@ def build_module(cfg, model, dm):
         weight_decay=cfg["weight_decay"],
         target_mean=dm.target_mean,
         target_std=dm.target_std,
-        loss_fn="GaussianNLLLoss",
-        gaussian_nll=True,
+        loss=cfg["loss"],
         quantile_head=cfg["quantile_head"],
         quantile_tau=cfg["quantile_tau"],
         quantile_weight=cfg["quantile_weight"],

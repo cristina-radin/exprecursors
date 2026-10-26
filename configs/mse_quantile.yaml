@@ -1,0 +1,42 @@
+# Input/output locations come from the environment, not from this file:
+#   data:    $MHW_DATA_FILE (merged_daily.nc), $MHW_CLIM_FILE (sst_climatology_doy.nc)
+#   outputs: $MHW_EXPERIMENTS_DIR/partition/<run_name>
+variables:
+- ptho_bot
+- u10
+- v10
+- msl
+- ssr
+ocean_variables:
+- ptho_bot
+in_channels: 5
+mode: full
+pooling: avg
+padding_mode: reflect
+loss: mse
+quantile_head: true
+quantile_tau: 0.9
+quantile_weight: 0.3
+hobday_smooth_target: true
+split_mode: stratified_kfold
+n_folds: 5
+seed: 42
+run_name: mse_quantile
+normalize: true
+num_workers: 4
+cnn_features: 256
+lstm_hidden: 512
+lstm_layers: 2
+dropout: 0.2
+learning_rate: 0.00005
+weight_decay: 0.0001
+lr_scheduler: cosine
+warmup_epochs: 5
+cosine_t_max_epochs: 60
+batch_size: 16
+max_epochs: 1000
+early_stopping_patience: 30
+save_top_k: 3
+window_size: 60
+lead_time: 7
+land_fill_mode: nearest

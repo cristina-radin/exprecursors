@@ -217,7 +217,7 @@ def main():
         lstm_hidden=config["lstm_hidden"],
         lstm_layers=config["lstm_layers"],
         dropout=config["dropout"],
-        gaussian_nll=config["gaussian_nll"],
+        gaussian_nll=config["loss"] == "gnll",  # architecture: [mean, log_var] head
         pooling=config["pooling"],
         padding_mode=config["padding_mode"],
         quantile_head=config["quantile_head"],
@@ -235,8 +235,7 @@ def main():
         weight_decay=config["weight_decay"],
         target_mean=datamodule.target_mean,
         target_std=datamodule.target_std,
-        loss_fn=config["loss_fn"],
-        gaussian_nll=config["gaussian_nll"],
+        loss=config["loss"],
         quantile_head=config["quantile_head"],
         quantile_tau=config["quantile_tau"],
         quantile_weight=config["quantile_weight"],

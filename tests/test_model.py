@@ -1,8 +1,9 @@
 """
 CNNLSTMModel / CNNLightningModule (src/models/cnn_lstm.py) on tiny synthetic
-tensors -- no real data, CPU, seconds. Covers the three loss variants, the
-gradient isolation between the two heads, the lr schedule, and the invalid
-constructor combinations that raise.
+tensors -- no real data, CPU, seconds. Covers the 2x2 loss variants
+(mse / gnll, with and without the quantile head), the gradient isolation
+between the two heads, the logged names and the val/test metrics, the lr
+schedule, and the invalid constructor combinations that raise.
 """
 
 import math
@@ -16,15 +17,20 @@ from src.models.cnn_lstm import CNNLightningModule, CNNLSTMModel
 # collapsing to 0 before the final AdaptiveAvgPool2d((1, 1)).
 BATCH, WINDOW, N_VARS, LAT, LON = 2, 4, 3, 16, 16
 
-# (gaussian_nll, quantile_head, loss_fn)
+# (name, loss, quantile_head)
 VARIANTS = [
-    ("gnll_quantile", True, True, "GaussianNLLLoss"),
-    ("gnll_only", True, False, "GaussianNLLLoss"),
-    ("mse", False, False, "MSELoss"),
+    ("gnll_quantile", "gnll", True),
+    ("gnll_only", "gnll", False),
+    ("mse_quantile", "mse", True),
+    ("mse", "mse", False),
 ]
 
 
-def _build(gaussian_nll, quantile_head, loss_fn, mode="full", **module_overrides):
+def _build(loss, quantile_head, mode="full", gaussian_nll=None, **module_overrides):
+    """gaussian_nll (the model's architecture flag) follows loss unless set
+    explicitly, to test the mismatch check."""
+    if gaussian_nll is None:
+        gaussian_nll = loss == "gnll"
     model = CNNLSTMModel(
         in_channels=N_VARS,
         cnn_features=8,
@@ -43,8 +49,7 @@ def _build(gaussian_nll, quantile_head, loss_fn, mode="full", **module_overrides
         weight_decay=1e-4,
         target_mean=0.0,
         target_std=1.0,
-        loss_fn=loss_fn,
-        gaussian_nll=gaussian_nll,
+        loss=loss,
         quantile_head=quantile_head,
         quantile_tau=0.9,
         quantile_weight=0.3,
@@ -66,16 +71,16 @@ def _batch():
 # ── forward shapes ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("name,gaussian_nll,quantile_head,loss_fn", VARIANTS)
-def test_forward_shape(name, gaussian_nll, quantile_head, loss_fn):
-    model, _ = _build(gaussian_nll, quantile_head, loss_fn)
+@pytest.mark.parametrize("name,loss,quantile_head", VARIANTS)
+def test_forward_shape(name, loss, quantile_head):
+    model, _ = _build(loss, quantile_head)
     x, _ = _batch()
     out = model.forward(x)
-    assert out.shape == (BATCH, 2 if gaussian_nll else 1)
+    assert out.shape == (BATCH, 2 if loss == "gnll" else 1)
 
 
 def test_forward_with_quantile_shapes():
-    model, _ = _build(True, True, "GaussianNLLLoss")
+    model, _ = _build("gnll", True)
     x, _ = _batch()
     y_hat, q_pred = model.forward_with_quantile(x)
     assert y_hat.shape == (BATCH, 2)
@@ -83,7 +88,7 @@ def test_forward_with_quantile_shapes():
 
 
 def test_forward_with_quantile_requires_quantile_head():
-    model, _ = _build(True, False, "GaussianNLLLoss")
+    model, _ = _build("gnll", False)
     x, _ = _batch()
     with pytest.raises(RuntimeError, match="quantile_head=True"):
         model.forward_with_quantile(x)
@@ -92,11 +97,9 @@ def test_forward_with_quantile_requires_quantile_head():
 # ── _step: finite loss + gradients reach every trainable parameter ──────────
 
 
-@pytest.mark.parametrize("name,gaussian_nll,quantile_head,loss_fn", VARIANTS)
-def test_step_loss_finite_and_all_params_get_gradient(
-    name, gaussian_nll, quantile_head, loss_fn
-):
-    model, module = _build(gaussian_nll, quantile_head, loss_fn)
+@pytest.mark.parametrize("name,loss,quantile_head", VARIANTS)
+def test_step_loss_finite_and_all_params_get_gradient(name, loss, quantile_head):
+    model, module = _build(loss, quantile_head)
     batch = _batch()
 
     loss, pred, y = module._step(batch, "val")
@@ -110,11 +113,14 @@ def test_step_loss_finite_and_all_params_get_gradient(
         assert torch.isfinite(p.grad).all(), f"{name_} got a non-finite gradient"
 
 
-# ── (a) gaussian_nll + quantile_head: gradient isolation between the heads ──
+# ── (a) quantile_head: gradient isolation between the heads ───────────────
 
 
-def test_pinball_gradient_does_not_reach_fc_and_nll_gradient_does_not_reach_quantile_head():
-    model, module = _build(True, True, "GaussianNLLLoss")
+@pytest.mark.parametrize("loss", ["gnll", "mse"])
+def test_pinball_gradient_does_not_reach_fc_and_main_gradient_does_not_reach_quantile_head(
+    loss,
+):
+    model, module = _build(loss, True)
     x, y = _batch()
 
     y_hat, q_pred = model.forward_with_quantile(x)
@@ -126,8 +132,8 @@ def test_pinball_gradient_does_not_reach_fc_and_nll_gradient_does_not_reach_quan
     assert any(p.grad is not None for p in model.quantile_head.parameters())
 
     model.zero_grad()
-    nll_loss, _ = module._loss_and_pred(y_hat, y)
-    nll_loss.backward()
+    main_loss, _ = module._loss_and_pred(y_hat, y)
+    main_loss.backward()
     assert all(p.grad is None for p in model.quantile_head.parameters())
     assert any(p.grad is not None for p in model.fc.parameters())
 
@@ -135,11 +141,11 @@ def test_pinball_gradient_does_not_reach_fc_and_nll_gradient_does_not_reach_quan
 # ── test_step/on_test_epoch_end: accumulate mean/log_var/q_pred/y only ──────
 
 
-@pytest.mark.parametrize("name,gaussian_nll,quantile_head,loss_fn", VARIANTS)
+@pytest.mark.parametrize("name,loss,quantile_head", VARIANTS)
 def test_on_test_epoch_end_concatenates_exactly_what_was_accumulated(
-    name, gaussian_nll, quantile_head, loss_fn
+    name, loss, quantile_head
 ):
-    model, module = _build(gaussian_nll, quantile_head, loss_fn)
+    model, module = _build(loss, quantile_head)
     module.eval()
 
     module.on_test_epoch_start()
@@ -151,7 +157,7 @@ def test_on_test_epoch_end_concatenates_exactly_what_was_accumulated(
 
     assert module.test_mean.shape == (n_batches * BATCH,)
     assert module.test_y.shape == (n_batches * BATCH,)
-    if gaussian_nll:
+    if loss == "gnll":
         assert module.test_log_var.shape == (n_batches * BATCH,)
     else:
         assert module.test_log_var is None
@@ -165,9 +171,7 @@ def test_on_test_epoch_end_concatenates_exactly_what_was_accumulated(
 
 
 def test_lr_schedule_warmup_then_cosine_decay():
-    model, module = _build(
-        True, True, "GaussianNLLLoss", warmup_epochs=5, cosine_t_max_epochs=60
-    )
+    model, module = _build("gnll", True, warmup_epochs=5, cosine_t_max_epochs=60)
     opt_config = module.configure_optimizers()
     scheduler = opt_config["lr_scheduler"]["scheduler"]
     lr_lambda = scheduler.lr_lambdas[0]
@@ -187,29 +191,37 @@ def test_lr_schedule_warmup_then_cosine_decay():
 # ── invalid constructor combinations raise ───────────────────────────────────
 
 
-def test_quantile_head_without_gaussian_nll_raises():
-    with pytest.raises(ValueError, match="quantile_head=True requires gaussian_nll"):
-        _build(False, True, "MSELoss")
+@pytest.mark.parametrize("loss", ["GaussianNLLLoss", "MSELoss", "", "nll"])
+def test_invalid_loss_raises(loss):
+    with pytest.raises(ValueError, match="loss must be one of"):
+        _build(loss, False, gaussian_nll=False)
 
 
-def test_gaussian_nll_with_wrong_loss_fn_raises():
-    with pytest.raises(ValueError, match="gaussian_nll=True requires loss_fn"):
-        _build(True, False, "MSELoss")
+@pytest.mark.parametrize("loss,gaussian_nll", [("gnll", False), ("mse", True)])
+def test_loss_and_model_head_mismatch_raises(loss, gaussian_nll):
+    with pytest.raises(ValueError, match="needs a model built with"):
+        _build(loss, False, gaussian_nll=gaussian_nll)
 
 
-def test_mse_with_wrong_loss_fn_raises():
-    with pytest.raises(ValueError, match="gaussian_nll=False requires loss_fn"):
-        _build(False, False, "GaussianNLLLoss")
+def test_quantile_head_flag_mismatch_raises():
+    model, _ = _build("mse", False)
+    with pytest.raises(ValueError, match="model was built with quantile_head"):
+        CNNLightningModule(
+            model=model, learning_rate=1e-3, weight_decay=1e-4, target_mean=0.0,
+            target_std=1.0, loss="mse", quantile_head=True, quantile_tau=0.9,
+            quantile_weight=0.3, lr_scheduler="cosine", warmup_epochs=2,
+            cosine_t_max_epochs=10,
+        )
 
 
 def test_quantile_tau_out_of_range_raises():
     with pytest.raises(ValueError, match="quantile_tau in \\(0, 1\\)"):
-        _build(True, True, "GaussianNLLLoss", quantile_tau=1.5)
+        _build("gnll", True, quantile_tau=1.5)
 
 
 def test_lr_scheduler_not_cosine_raises():
     with pytest.raises(ValueError, match="lr_scheduler must be 'cosine'"):
-        _build(True, True, "GaussianNLLLoss", lr_scheduler="step")
+        _build("gnll", True, lr_scheduler="step")
 
 
 @pytest.mark.parametrize("pooling", ["bogus", ""])
@@ -248,7 +260,7 @@ def test_invalid_padding_mode_raises(padding_mode):
 
 def test_invalid_mode_raises():
     with pytest.raises(ValueError, match="mode must be"):
-        _build(True, False, "GaussianNLLLoss", mode="bogus")
+        _build("gnll", False, mode="bogus")
 
 
 # ── mode masking: applied once, inside _encode() ─────────────────────────────
@@ -262,7 +274,7 @@ NS_LAT, NS_LON = slice(100, 127), slice(150, 187)
 
 @pytest.mark.parametrize("mode", ["local_only", "remote_only"])
 def test_mode_masks_gradient_exactly_zero_in_masked_region(mode):
-    model, _ = _build(True, False, "GaussianNLLLoss", mode=mode)
+    model, _ = _build("gnll", False, mode=mode)
     x = torch.randn(1, 2, N_VARS, REAL_LAT, REAL_LON, requires_grad=True)
 
     model.forward(x).sum().backward()
@@ -281,7 +293,7 @@ def test_mode_masking_is_identical_across_entry_points():
     """forward(), forward_with_quantile() and _step() all go through the
     same _encode(), so they must mask (and predict) identically regardless
     of which one is called."""
-    model, module = _build(True, True, "GaussianNLLLoss", mode="local_only")
+    model, module = _build("gnll", True, mode="local_only")
     model.eval()
     module.eval()
     x = torch.randn(1, 2, N_VARS, REAL_LAT, REAL_LON)
@@ -294,3 +306,96 @@ def test_mode_masking_is_identical_across_entry_points():
 
     assert torch.equal(y_hat_forward, y_hat_fwq)
     assert torch.equal(pred_step, y_hat_forward[:, 0:1])
+
+
+# ── logged names and val/test metrics ────────────────────────────────────────
+
+
+def _record_logs(module):
+    logged = {}
+    module.log = lambda name, value, **kwargs: logged.__setitem__(name, value)
+    return logged
+
+
+@pytest.mark.parametrize("name,loss,quantile_head", VARIANTS)
+def test_step_logs_main_and_pinball_loss_names(name, loss, quantile_head):
+    _, module = _build(loss, quantile_head)
+    logged = _record_logs(module)
+    module._step(_batch(), "val")
+    if quantile_head:
+        assert set(logged) == {"val_main_loss", "val_pinball_loss"}
+    else:
+        assert logged == {}
+    assert not any("nll" in k for k in logged)
+
+
+@pytest.mark.parametrize("name,loss,quantile_head", VARIANTS)
+def test_validation_metrics_match_manual_values(name, loss, quantile_head):
+    model, module = _build(loss, quantile_head)
+    module.eval()
+    logged = _record_logs(module)
+    preds, qs, ys = [], [], []
+    with torch.no_grad():
+        for _ in range(3):
+            x, y = _batch()
+            module.validation_step((x, y), 0)
+            y_hat, q_pred = module._forward_dual(x)
+            preds.append(y_hat[:, 0]); ys.append(y[:, 0])
+            if quantile_head:
+                qs.append(q_pred[:, 0])
+    pred, y = torch.cat(preds), torch.cat(ys)
+    assert {"val_loss", "val_mae", "val_corr"} <= set(logged)
+    assert module.val_mae.compute() == pytest.approx(float((pred - y).abs().mean()), abs=1e-6)
+    expected_r = float(torch.corrcoef(torch.stack([pred, y]).double())[0, 1])
+    # torchmetrics accumulates running sums in float32: ~1e-4 off on 6 samples.
+    assert module.val_corr.compute() == pytest.approx(expected_r, abs=1e-3)
+    if quantile_head:
+        expected_cov = float((y > torch.cat(qs)).float().mean())
+        assert module.val_q_coverage.compute() == pytest.approx(expected_cov)
+        assert "val_q_coverage" in logged
+    else:
+        assert not hasattr(module, "val_q_coverage")
+
+
+@pytest.mark.parametrize("name,loss,quantile_head", VARIANTS)
+def test_test_q_coverage_logged_only_with_quantile_head(name, loss, quantile_head):
+    model, module = _build(loss, quantile_head)
+    module.eval()
+    logged = _record_logs(module)
+    module.on_test_epoch_start()
+    with torch.no_grad():
+        for _ in range(3):
+            module.test_step(_batch(), 0)
+    module.on_test_epoch_end()
+    if quantile_head:
+        expected = float((module.test_y > module.test_q_pred).float().mean())
+        assert float(logged["test_q_coverage"]) == pytest.approx(expected)
+    else:
+        assert "test_q_coverage" not in logged
+
+
+@pytest.mark.parametrize("name,loss,quantile_head", VARIANTS)
+def test_repeated_test_runs_do_not_accumulate_metrics(name, loss, quantile_head):
+    model, module = _build(loss, quantile_head)
+    module.eval()
+    _record_logs(module)
+    batches = [_batch() for _ in range(3)]
+
+    def run():
+        module.on_test_epoch_start()
+        with torch.no_grad():
+            for b in batches:
+                module.test_step(b, 0)
+        module.on_test_epoch_end()
+        out = [float(module.test_mae.compute()), float(module.test_corr.compute())]
+        if quantile_head:
+            out.append(float(module.test_q_coverage.compute()))
+        return out
+
+    first = run()
+    module.on_test_epoch_start()  # what a second trainer.test() does first
+    assert module.test_mae.update_count == 0
+    assert module.test_corr.update_count == 0
+    if quantile_head:
+        assert module.test_q_coverage.update_count == 0
+    assert run() == pytest.approx(first)

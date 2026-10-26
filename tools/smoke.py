@@ -6,7 +6,8 @@ documents as suppressing both) -- the only thing that exercises main() at
 all; neither pytest nor tools/equivalence.py ever call it (see
 docs/open_issues.md).
 
-Six cases: the three committed loss variants with mode: full, plus
+Seven cases: the four loss variants (mse, mse_quantile, gnll,
+gnll_quantile) with mode: full, plus
 mode: local_only and mode: remote_only with the committed loss
 (configs/gnll_quantile.yaml), plus land_fill_mode: zero with mode: full.
 Every case gets its own temporary yaml (max_epochs: 1 override, and
@@ -46,6 +47,7 @@ BASE_CONFIGS = {
     "full_gnll_quantile": REPO / "configs/gnll_quantile.yaml",
     "full_gnll_only": REPO / "configs/gnll.yaml",
     "full_mse": REPO / "configs/mse.yaml",
+    "full_mse_quantile": REPO / "configs/mse_quantile.yaml",
 }
 
 

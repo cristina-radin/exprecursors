@@ -142,6 +142,13 @@ global average pool, and compare full vs local.
 ## Round B: more hyperparameters fixed in code
 `log_var` clamp +-10, head hidden size 64.
 
+## `quantile_weight` 0.3 and `quantile_tau` 0.9 were set by hand
+Both were fixed on 19 Aug 2026 (`f35cb6e`, `docs/history/narrative.md:283-295`)
+and never compared with other values: every quantile-head run in git and in
+W&B uses 0.9 / 0.3. tau 0.9 matches the Hobday p90. `mse_quantile` keeps the
+same 0.3 (owner's decision); the effective share of the pinball term is to be
+reported per model.
+
 ## Round B: nearest fill covers all land, not just the coast
 Nearest fill covers ALL land pixels, not only the coast: continents become
 large patches of repeated coastal values.
