@@ -35,13 +35,9 @@ class CNNEncoder(nn.Module):
     Args:
         in_channels: number of input variables (e.g. 5)
         out_features: size of the output feature vector
-        pooling: "max" or "avg". AvgPool spreads the gradient backward pass
-            over the full 2x2 window instead of routing it through a single
-            argmax position. Applies to these 3 pooling layers only, not
-            AdaptiveAvgPool2d at the end (already an avg-pool either way).
-        padding_mode: "zeros" or "reflect". Reflect padding mirrors the
-            interior signal across the border instead of introducing a zero
-            discontinuity at the domain edge. Applies to all 4 Conv2d layers.
+        pooling: "max" or "avg". Applies to these 3 pooling layers only, not
+            AdaptiveAvgPool2d at the end.
+        padding_mode: "zeros" or "reflect". Applies to all 4 Conv2d layers.
     """
 
     def __init__(
@@ -107,10 +103,9 @@ class CNNLSTMModel(nn.Module):
         dropout:      dropout in LSTM
         gaussian_nll: architecture flag, True = the head outputs
             [mean, log_var] (loss "gnll"), False = [mean] only (loss
-            "mse"). train_partition.py derives it from the yaml `loss`;
-            kept under this name so saved model_config.json files load.
-        pooling:      "max" or "avg" — see CNNEncoder docstring
-        padding_mode: "zeros" or "reflect" — see CNNEncoder docstring
+            "mse").
+        pooling:      "max" or "avg"
+        padding_mode: "zeros" or "reflect" 
         mode:         "full" (no masking), "local_only" (zero everything
             outside the North Sea box) or "remote_only" (zero everything
             inside it).
@@ -165,8 +160,7 @@ class CNNLSTMModel(nn.Module):
             nn.Linear(64, out_dim),
         )
 
-        # Auxiliary quantile head (pinball loss). Own parameters, shared
-        # CNN + LSTM backbone.
+        # Auxiliary quantile head (pinball loss).
         if quantile_head:
             self.quantile_head = nn.Sequential(
                 nn.Linear(context_dim, 64),
@@ -213,7 +207,6 @@ class CNNLSTMModel(nn.Module):
     def forward_with_quantile(self, x_spatial: torch.Tensor):
         """Like forward(), but also returns the auxiliary quantile head's
         output. Requires quantile_head=True.
-
         Shares the exact backbone computation with forward() via _encode()
 
         Returns:
@@ -311,9 +304,7 @@ class CNNLightningModule(pl.LightningModule):
         return self.model(x_spatial.float())
 
     def _pinball_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Pinball (quantile) loss at self.quantile_tau. `pred` must be the
-        dedicated quantile-head output (model.forward_with_quantile's q_pred)
-        (never the mean head's `mean`)."""
+        """Quantile loss at self.quantile_tau."""
         tau = self.quantile_tau
         err = target - pred
         return torch.max(tau * err, (tau - 1) * err).mean()
@@ -321,8 +312,7 @@ class CNNLightningModule(pl.LightningModule):
     def _loss_and_pred(self, y_hat, y):
         """
         y_hat: (batch, 2) [mean, log_var] if gaussian_nll else (batch, 1) [mean].
-        Returns (loss, pred) where pred is always (batch, 1) — the mean, for
-        metrics/logging/plots
+        Returns (loss, pred) where pred is always (batch, 1)
         """
         if self.gaussian_nll:
             mean = y_hat[:, 0:1]
@@ -397,11 +387,7 @@ class CNNLightningModule(pl.LightningModule):
         self.test_mae.update(pred.squeeze(), y.squeeze())
         self.test_corr.update(pred.squeeze(), y.squeeze())
 
-        # pred (from _step) is already the mean; call _forward_dual again
-        # (same deterministic eval-mode forward) to also get log_var/q_pred,
-        # which _step's (loss, pred, y) contract doesn't carry -- callers
-        # (training_step, tools/equivalence.py) rely on that exact 3-tuple,
-        # so it stays unchanged.
+        # Second forward pass to also get log_var and q_pred, ()_step does not return.)
         x_spatial, _ = batch
         y_hat, q_pred = self._forward_dual(x_spatial)
         self.test_means.append(y_hat[:, 0:1].detach().cpu())
@@ -429,10 +415,7 @@ class CNNLightningModule(pl.LightningModule):
             f"\nTest results:  MAE={mae:.4f} (norm)  MAE={mae_physical:.4f} °C  Pearson r={corr:.4f}"
         )
 
-        # Concatenated here (not saved to disk): this module has no idea of
-        # fold, sample dates, or where to write a file -- train_partition.py
-        # reads these attributes after trainer.test() returns and assembles
-        # test_predictions.npz/test_metrics.json itself.
+        # Kept in memory; train_partition.py saves them with the dates.
         self.test_mean = torch.cat(self.test_means).squeeze(-1)
         self.test_y = torch.cat(self.test_ys).squeeze(-1)
         self.test_log_var = (
@@ -446,8 +429,7 @@ class CNNLightningModule(pl.LightningModule):
         optimizer = torch.optim.Adam(
             self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
         )
-        # Linear warmup for warmup_epochs, then cosine decay to 0 over the
-        # remaining cosine_t_max_epochs.
+
         max_epochs = self.cosine_t_max_epochs
         warmup = self.warmup_epochs
 
