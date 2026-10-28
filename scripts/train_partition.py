@@ -113,7 +113,7 @@ def _write_test_outputs(
     target_mean = datamodule.target_mean
     target_std = datamodule.target_std
 
-    mean_norm = lightning_module.test_mean.numpy()
+    pred_norm = lightning_module.test_mean.numpy()
     y_norm = lightning_module.test_y.numpy()
     npz_kwargs = dict(
         sample_index=sample_indices,
@@ -121,19 +121,19 @@ def _write_test_outputs(
         date=dates,
         target_mean=target_mean,
         target_std=target_std,
-        mean_norm=mean_norm,
-        mean_physical=mean_norm * target_std + target_mean,
+        pred_norm=pred_norm,
+        pred_degC=pred_norm * target_std + target_mean,
         y_norm=y_norm,
-        y_physical=y_norm * target_std + target_mean,
+        y_degC=y_norm * target_std + target_mean,
     )
     if lightning_module.test_log_var is not None:
         log_var_norm = lightning_module.test_log_var.numpy()
         npz_kwargs["log_var_norm"] = log_var_norm
-        npz_kwargs["log_var_physical"] = log_var_norm + 2 * np.log(target_std)
+        npz_kwargs["log_var_degC2"] = log_var_norm + 2 * np.log(target_std)
     if lightning_module.test_q_pred is not None:
-        q_pred_norm = lightning_module.test_q_pred.numpy()
-        npz_kwargs["q_pred_norm"] = q_pred_norm
-        npz_kwargs["q_pred_physical"] = q_pred_norm * target_std + target_mean
+        quantile_pred_norm = lightning_module.test_q_pred.numpy()
+        npz_kwargs["quantile_pred_norm"] = quantile_pred_norm
+        npz_kwargs["quantile_pred_degC"] = quantile_pred_norm * target_std + target_mean
     np.savez(output_dir / "test_predictions.npz", **npz_kwargs)
 
     best_ckpt_path = Path(checkpoint_callback.best_model_path)

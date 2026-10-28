@@ -485,3 +485,21 @@ with 0.31.0 (`--include-synced`) into `mhw-precursors-rebuild`. The venv now
 has wandb 0.31.0 (`requirements.txt`). Any run synced with 0.25.1 must be
 checked with `wandb.Api().run("<entity>/<project>/<id>")`; if missing,
 re-sync it with `--include-synced`.
+
+## `test_predictions.npz` keys renamed (28 Oct 2026)
+Renamed in the commit "rename test_predictions.npz keys (pred, degC,
+quantile_pred)" so the names say what they are (all values are SST
+anomalies; `_norm` normalised units, `_degC` °C):
+
+| Old | New |
+|---|---|
+| `mean_norm` | `pred_norm` |
+| `mean_physical` | `pred_degC` |
+| `y_physical` | `y_degC` |
+| `q_pred_norm` | `quantile_pred_norm` |
+| `q_pred_physical` | `quantile_pred_degC` |
+| `log_var_physical` | `log_var_degC2` |
+
+`y_norm` and `log_var_norm` are unchanged. npz files written before this
+commit (`experiments_rebuild` jobs 28138143 and 28205723, and all August runs)
+use the old names; scripts reading them must map the keys.
