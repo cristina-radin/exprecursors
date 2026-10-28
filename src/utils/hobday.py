@@ -18,7 +18,7 @@ Calendar: 365-day years without Feb 29 (merged_daily.nc has none), so doy
 comes from month and day (noleap_doy), not from dayofyear.
 
 This module also holds load_ns_mean_clim_smooth_delta, which corrects the
-regression target for the missing 31-day smooth of mean_clim (open_issues #40).
+regression target for the missing 31-day smooth of mean_clim.
 """
 
 import numpy as np
@@ -137,7 +137,7 @@ def load_ns_mean_clim_smooth_delta(
         to_anom_smoothed = SST - mean_clim_smoothed
                           = to_anom_unsmoothed + (mean_clim_unsmoothed - mean_clim_smoothed)
                           = to_anom_unsmoothed + delta
-    See docs/open_issues.md #40 for the RMS/max magnitude of this correction.
+    See docs/open_issues.md for the RMS/max magnitude of this correction.
     """
     ds = xr.open_dataset(clim_file)
     mean_clim = (

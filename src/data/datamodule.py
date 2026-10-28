@@ -14,7 +14,7 @@ This keeps MHW-day representation balanced across folds and gives every fold a
 different val set. MHW days follow src/utils/hobday.py (Hobday et al. 2016) on the full contiguous
 target series.
 
-Purge at split boundaries (open_issues #65): a sample i covers days
+Purge at split boundaries: a sample i covers days
 i .. i + window_size - 1 + lead_time, so two samples share days when
 |i - j| <= window_size - 1 + lead_time. Test samples are never removed; val
 samples that share days with a test sample are removed; train samples that
@@ -198,7 +198,7 @@ class LazyDataModule(pl.LightningDataModule):
         val_indices = [i for i in range(total_size) if target_years[i] in val_years]
         test_indices = [i for i in range(total_size) if target_years[i] in test_years]
 
-        # Purge samples that share days with a higher-priority split (#65),
+        # Purge samples that share days with a higher-priority split,
         # before compute_stats so the stats use the purged train set.
         gap = full_ds.window_size - 1 + full_ds.lead_time
         n_train, n_val = len(train_indices), len(val_indices)

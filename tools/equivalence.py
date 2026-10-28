@@ -206,7 +206,7 @@ def compute(dm, cfg, ckpt_sha, ckpt):
     pl.seed_everything(SEED, workers=True)
     model = build_model(model_kwargs(cfg))
     module = build_module(cfg, model, dm)
-    # strict=True: every key must match (known_issues #16, no strict=False)
+    # strict=True: every key must match (no strict=False)
     module.load_state_dict(ckpt["state_dict"], strict=True)
     model.eval()
     module.eval()
