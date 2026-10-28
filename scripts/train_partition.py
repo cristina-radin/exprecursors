@@ -1,17 +1,7 @@
 """
-train_partition.py — Train partition experiments for local vs remote predictability.
+Train and test the CNN-LSTM model on one fold, and save its checkpoints,
+metrics and test predictions.
 
-Three conditions, same TbotAtm variable set (ptho_bot + atmosphere), selected
-by the yaml's "mode" key (CNNLSTMModel masks the input inside _encode(),
-see src/models/cnn_lstm.py):
-  mode: full        : no masking (baseline)
-  mode: remote_only : zero ALL channels inside NS box  → only remote info
-  mode: local_only  : zero ALL channels outside NS box → only local NS info
-
-NS box (same as src/data/masking.py): lat[100:127], lon[150:187]
-
-Usage:
-  python scripts/train_partition.py --config configs/gnll_quantile.yaml --fold 0
 """
 
 import argparse
@@ -36,13 +26,10 @@ from src.utils.paths import EXPERIMENTS_DIR
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# ── Main ─────────────────────────────────────────────────────────────────────
-
 
 def _require_clean_output_dir(output_dir: Path) -> None:
     """Raise if output_dir/checkpoints already has a .ckpt file from an
-    earlier run -- best_ckpt() picks the lowest val_loss across the whole
-    directory and would silently mix runs.
+    earlier run
     """
     existing = list((output_dir / "checkpoints").glob("*.ckpt"))
     if existing:
@@ -54,10 +41,8 @@ def _require_clean_output_dir(output_dir: Path) -> None:
 
 
 def _resolve_fold(config: dict, fold: int) -> None:
-    """Mutate config in place: inject fold and append "_fold{N}" to
-    run_name. Raises if the yaml already has a fold key (it must come from
-    --fold, so there is exactly one source of truth) or if fold is outside
-    [0, n_folds).
+    """Add "_fold{N}" to run_name. Error if the yaml already has a fold
+       or if fold is not in 0..n_folds-1.
     """
     if "fold" in config:
         raise ValueError(
@@ -74,15 +59,15 @@ def _resolve_fold(config: dict, fold: int) -> None:
 
 
 def _apply_limit_batches_suffix(config: dict, limit_batches: int) -> None:
-    """Append "_limit{N}" to run_name when --limit_batches is active, so a
-    short smoke/debug run can never collide with (or trip
-    _require_clean_output_dir against) a real training's output_dir.
+    """Short smoke/debug runs
     """
     if limit_batches > 0:
         config["run_name"] = f"{config['run_name']}_limit{limit_batches}"
 
 
 def _git_commit() -> str:
+    """ To track the version for each run
+    """
     proc = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True
     )
@@ -95,31 +80,32 @@ def _write_test_outputs(
     output_dir, lightning_module, datamodule, config, trainer_test_results,
     checkpoint_callback, limit_batches,
 ):
-    """Assemble test_predictions.npz and test_metrics.json from what
-    CNNLightningModule accumulated during test (mean/log_var/q_pred/y,
-    normalized units only -- it has no idea of dates or folds) plus
-    everything only train_partition.py knows: the dataset's sample/target
-    indices and dates, the fold, the best checkpoint's name/val_loss/epoch,
-    and the git commit.
+    """Save the test results for each fold:
+    - test_predictions.npz: for each test day, its date, the prediction
+      (mean, log-variance, quantile) and the real value (y).
+    - test_metrics.json: the test metrics plus the fold, the best
+      checkpoint (name, val_loss, epoch) and the git commit.
+    All values are SST anomalies: _norm in normalised units, _degC in °C.
+
     """
+    #sample number = first day of its window
     all_sample_indices = np.array(datamodule.test_dataset.indices)
-    n_preds = len(lightning_module.test_y)
+    n_preds = len(lightning_module.test_y)  #number of predictions
     if limit_batches:
-        # --limit_batches evaluates only the first n_preds samples of the
-        # (shuffle=False) test set, in order -- match them up instead of
-        # requiring every test sample to have been predicted.
+        # to run just a few batches for debugging
         sample_indices = all_sample_indices[:n_preds]
     else:
         if n_preds != len(all_sample_indices):
             raise RuntimeError(
                 f"{n_preds} test predictions but {len(all_sample_indices)} "
-                "test sample indices -- devices must be 1 so prediction "
-                "order matches the dataset order."
+                "test sample indices: devices must be 1 so prediction order "
+                "matches the dataset order."
             )
         sample_indices = all_sample_indices
 
     window_size = config["window_size"]
     lead_time = config["lead_time"]
+    # day each sample predicts = first day + window_size - 1 + lead_time
     target_indices = sample_indices + window_size - 1 + lead_time
     full_ds = datamodule.test_dataset.dataset
     dates = full_ds.ds.time.values[target_indices]
@@ -143,7 +129,6 @@ def _write_test_outputs(
     if lightning_module.test_log_var is not None:
         log_var_norm = lightning_module.test_log_var.numpy()
         npz_kwargs["log_var_norm"] = log_var_norm
-        # variance scales by target_std**2 in physical units
         npz_kwargs["log_var_physical"] = log_var_norm + 2 * np.log(target_std)
     if lightning_module.test_q_pred is not None:
         q_pred_norm = lightning_module.test_q_pred.numpy()
@@ -192,23 +177,21 @@ def main():
         )
 
     pl.seed_everything(config["seed"])
-    torch.set_float32_matmul_precision("medium")
+    torch.set_float32_matmul_precision("medium") #runs faster, negligible effect on results
 
     output_dir = EXPERIMENTS_DIR / "partition" / config["run_name"]
     output_dir.mkdir(parents=True, exist_ok=True)
     _require_clean_output_dir(output_dir)
 
-    # Print and save the exact resolved config this run is using (fold
-    # injected, run_name fold-suffixed), both in the SLURM/stdout log and as
-    # a record in output_dir. datamodule below gets this same dict directly
-    # -- not a path it would have to re-read -- so it and train_partition.py
-    # can never end up looking at different config content.
+    # Print and save the exact resolved config this run is using
     print(f"\n=== Resolved config: {args.config} (fold {args.fold}) ===")
     print(yaml.dump(config, sort_keys=False, default_flow_style=False))
     with open(output_dir / "resolved_config.yaml", "w") as f:
         yaml.dump(config, f, sort_keys=False, default_flow_style=False)
 
     datamodule = LazyDataModule(config=config)
+    # Called here (not only by Lightning) because the module below needs
+    # target_mean/target_std; Lightning's later setup() call does nothing.
     datamodule.setup()
 
     model_kwargs = dict(
@@ -224,9 +207,7 @@ def main():
         mode=config["mode"],
     )
     model = CNNLSTMModel(**model_kwargs)
-    # Ground truth for eval/XAI scripts (load_model_config) — the exact
-    # resolved kwargs used to build `model`, so they can't independently
-    # re-derive them. See src/utils/checkpoints.py.
+
     save_model_config(output_dir, **model_kwargs)
 
     lightning_module = CNNLightningModule(
@@ -276,8 +257,7 @@ def main():
         mode=os.environ.get("WANDB_MODE", "online"),
         config=config,
     )
-    # name="" version="" so metrics.csv lands directly in output_dir,
-    # not output_dir/lightning_logs/version_0/metrics.csv.
+
     csv_logger = CSVLogger(save_dir=str(output_dir), name="", version="")
 
     limit = args.limit_batches if args.limit_batches > 0 else 1.0
@@ -294,9 +274,7 @@ def main():
     )
 
     trainer.fit(lightning_module, datamodule=datamodule)
-    # ckpt_path="best" (not "last"): GaussianNLLLoss's variance term can
-    # spike val_loss well above its own best epoch late in training, so
-    # "best" and "last" can differ a lot.
+    # ckpt_path="best" (not "last")
     test_results = trainer.test(lightning_module, datamodule=datamodule, ckpt_path="best")
     _write_test_outputs(
         output_dir, lightning_module, datamodule, config, test_results,
