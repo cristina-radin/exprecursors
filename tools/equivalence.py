@@ -45,8 +45,8 @@ SEED = 42
 # because train_partition.py appends "_fold{N}" to it).
 LOCATION_KEYS = {"data_dir", "output_dir", "run_name"}
 # Options removed from CONFIG because they had no effect on the committed
-# model (dead/no-op code paths at the time this checkpoint was trained) -- see
-# docs/open_issues.md for why each one was inert. A key here may be absent
+# model (dead/no-op code paths at the time this checkpoint was trained) -- the
+# comment above each key says why it was inert. A key here may be absent
 # from the current CONFIG only if the checkpoint's own resolved_config.yaml
 # has exactly this value; any other value, or the key still present with a
 # different value, is an error like any other mismatch.

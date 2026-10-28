@@ -3,8 +3,7 @@ Smoke-test scripts/train_partition.py end to end, on real data, with
 --limit_batches 1 and max_epochs: 1 (one real train/val/test batch, with
 logging and checkpointing ACTIVE -- unlike --fast_dev_run, which Lightning
 documents as suppressing both) -- the only thing that exercises main() at
-all; neither pytest nor tools/equivalence.py ever call it (see
-docs/open_issues.md).
+all; neither pytest nor tools/equivalence.py ever call it.
 
 Seven cases: the four loss variants (mse, mse_quantile, gnll,
 gnll_quantile) with mode: full, plus
