@@ -69,7 +69,7 @@ export WANDB_MODE=offline
 # activate project  venv
 unset PYTHONPATH 
 set +u
-source /work/bg1446/u241379/exprecursors/venv/bin/activate
+source /work/bg1446/u241379/venv/bin/activate
 set -u
 
 # INFO for the log 
