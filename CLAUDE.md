@@ -2,6 +2,10 @@
 
 See README.md for setup and commands.
 
+
+> Note (Oct 2026): main is the basic repo. sandbox/ and tools/ (equivalence, smoke) live in branch `rebuild` and are not active here; ignore the rules below that refer to them.
+
+
 ## Rule for this branch (`rebuild`)
 Nothing enters without the owner's review. Every file must answer "which number
 or figure of the paper comes out of here?". Exploratory work goes in `sandbox/`.
