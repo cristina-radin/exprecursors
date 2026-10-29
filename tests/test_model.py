@@ -344,8 +344,9 @@ def test_validation_metrics_match_manual_values(name, loss, quantile_head):
             if quantile_head:
                 qs.append(q_pred[:, 0])
     pred, y = torch.cat(preds), torch.cat(ys)
-    assert {"val_loss", "val_mae", "val_corr"} <= set(logged)
+    assert {"val_loss", "val_mae", "val_corr", "val_bias"} <= set(logged)
     assert module.val_mae.compute() == pytest.approx(float((pred - y).abs().mean()), abs=1e-6)
+    assert module.val_bias.compute() == pytest.approx(float((pred - y).mean()), abs=1e-6)
     expected_r = float(torch.corrcoef(torch.stack([pred, y]).double())[0, 1])
     # torchmetrics accumulates running sums in float32: ~1e-4 off on 6 samples.
     assert module.val_corr.compute() == pytest.approx(expected_r, abs=1e-3)

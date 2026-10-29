@@ -289,6 +289,7 @@ class CNNLightningModule(pl.LightningModule):
         # fraction of samples above q_pred (about 1 - tau if calibrated).
         self.val_mae = MeanAbsoluteError()
         self.val_corr = PearsonCorrCoef()
+        self.val_bias = MeanMetric()  # mean(pred - y)
         self.test_mae = MeanAbsoluteError()
         self.test_corr = PearsonCorrCoef()
         if quantile_head:
@@ -362,8 +363,10 @@ class CNNLightningModule(pl.LightningModule):
 
         self.val_mae.update(pred.squeeze(-1), y.squeeze(-1))
         self.val_corr.update(pred.squeeze(-1), y.squeeze(-1))
+        self.val_bias.update(pred.squeeze(-1) - y.squeeze(-1))
         self.log("val_mae", self.val_mae, on_step=False, on_epoch=True)
         self.log("val_corr", self.val_corr, on_step=False, on_epoch=True)
+        self.log("val_bias", self.val_bias, on_step=False, on_epoch=True)
         if self.quantile_head:
             self.val_q_coverage.update((y > q_pred).float())
             self.log("val_q_coverage", self.val_q_coverage, on_step=False, on_epoch=True)
