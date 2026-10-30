@@ -137,7 +137,6 @@ def load_ns_mean_clim_smooth_delta(
         to_anom_smoothed = SST - mean_clim_smoothed
                           = to_anom_unsmoothed + (mean_clim_unsmoothed - mean_clim_smoothed)
                           = to_anom_unsmoothed + delta
-    See docs/open_issues.md for the RMS/max magnitude of this correction.
     """
     ds = xr.open_dataset(clim_file)
     mean_clim = (

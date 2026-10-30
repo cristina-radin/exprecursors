@@ -4,6 +4,7 @@ See README.md for setup and commands.
 
 
 > Note (Oct 2026): main is the basic repo. sandbox/ and tools/ (equivalence, smoke) live in branch `rebuild` and are not active here; ignore the rules below that refer to them.
+> Internal notes (open issues, narrative, history) are outside the repo, in /work/bg1446/u241379/notes/ (see its README.md).
 
 
 ## Rule for this branch (`rebuild`)

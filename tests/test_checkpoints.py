@@ -3,7 +3,7 @@ save_model_config / load_model_config (src/utils/checkpoints.py): the keys
 they read and write must always match CNNLSTMModel.__init__ exactly, for
 every loss variant -- this is what broke when arch/temporal_features/
 state_feature were removed from the constructor but not from
-CNNLSTM_DEFAULTS (docs/open_issues.md).
+CNNLSTM_DEFAULTS.
 """
 
 import json
