@@ -61,19 +61,19 @@ class CNNEncoder(nn.Module):
             nn.Conv2d(
                 in_channels, 32, kernel_size=3, padding=1, padding_mode=padding_mode
             ),
-            nn.BatchNorm2d(32),
+            nn.BatchNorm2d(32, momentum=0.01),
             nn.ReLU(),
             Pool2d(2),  # 141×201 → 70×100
             nn.Conv2d(32, 64, kernel_size=3, padding=1, padding_mode=padding_mode),
-            nn.BatchNorm2d(64),
+            nn.BatchNorm2d(64, momentum=0.01),
             nn.ReLU(),
             Pool2d(2),  # 70×100 → 35×50
             nn.Conv2d(64, 128, kernel_size=3, padding=1, padding_mode=padding_mode),
-            nn.BatchNorm2d(128),
+            nn.BatchNorm2d(128, momentum=0.01),
             nn.ReLU(),
             Pool2d(2),  # 35×50 → 17×25
             nn.Conv2d(128, 256, kernel_size=3, padding=1, padding_mode=padding_mode),
-            nn.BatchNorm2d(256),
+            nn.BatchNorm2d(256, momentum=0.01),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d((1, 1)),  # → (batch, 256, 1, 1)
             nn.Flatten(),  # → (batch, 256)
